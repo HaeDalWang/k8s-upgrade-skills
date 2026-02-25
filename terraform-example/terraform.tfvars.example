@@ -1,0 +1,25 @@
+# =============================================================================
+# seungdo 환경 - Terraform 변수
+# =============================================================================
+
+# 네트워크
+vpc_cidr    = "10.222.0.0/16"
+domain_name = "seungdobae.com"  # 실제 사용 도메인으로 변경
+
+# EKS
+eks_cluster_version = "1.33"
+
+# EKS 노드 AMI 별칭 (클러스터 버전에 맞게 갱신 필요)
+# al2023: aws ssm get-parameters-by-path --path "/aws/service/eks/optimized-ami/$K8S_VERSION/amazon-linux-2023/" --recursive | jq -cr '.Parameters[].Name' | grep -v "recommended" | awk -F '/' '{print $10}' | sed -r 's/.*(v[[:digit:]]+)$/\1/' | sort | uniq
+# bottlerocket: aws ssm get-parameters-by-path --path "/aws/service/bottlerocket/aws-k8s-$K8S_VERSION" --recursive | jq -cr '.Parameters[].Name' | grep -v "latest" | awk -F '/' '{print $7}' | sort | uniq
+# default EC2NodeClass가 al2023 변수 사용, 현재 배포는 bottlerocket@1.54.0
+eks_node_ami_alias_al2023       = "al2023@v20250519"
+eks_node_ami_alias_bottlerocket = "bottlerocket@1.54.0"
+
+# Helm 차트 버전 (현재 클러스터 배포 버전과 동일하게 유지)
+karpenter_chart_version                    = "1.8.3"
+aws_load_balancer_controller_chart_version = "1.17.0"
+external_dns_chart_version                 = "1.19.0"
+ingress_nginx_chart_version                = "4.13.3"
+argocd_chart_version                       = "9.2.3"
+keda_chart_version                         = "2.18.0"
