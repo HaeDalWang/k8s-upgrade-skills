@@ -1,7 +1,3 @@
-# 여러 오픈소스 솔루션들의 비밀번호를 저장한 Secrets Manager 조회
-data "aws_secretsmanager_secret_version" "auth" {
-  secret_id = "seungdo/auth"
-}
 ########################################################
 # ACM Certificate for Project Domain
 ########################################################
@@ -40,31 +36,3 @@ resource "aws_acm_certificate_validation" "project" {
   certificate_arn         = aws_acm_certificate.project.arn
   validation_record_fqdns = [for record in aws_route53_record.acm_validation_project_domain : record.fqdn]
 }
-
-
-########################################################
-# 애플리케이션에 부여할 IAM 역할 (IRSA)
-########################################################
-# # EZL App Server
-# module "application_irsa" {
-#   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts"
-#   version = "6.2.3"
-
-#   name            = "ezl-app-server-dev-role"
-#   use_name_prefix = false
-  
-#   policies = {
-#       secretmanager_access = "arn:aws:iam::aws:policy/AWSSecretsManagerClientReadOnlyAccess"
-#       s3_full_access  = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-#       ssm_full_access = "arn:aws:iam::aws:policy/AmazonSSMFullAccess"
-#       sqs_full_access = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-#   }
-#   oidc_providers = {
-#     ezl-app-server = {
-#       provider_arn = module.eks.oidc_provider_arn
-#       namespace_service_accounts = [
-#         "intgapp:app-server"
-#       ]
-#     }
-#   }
-# }
