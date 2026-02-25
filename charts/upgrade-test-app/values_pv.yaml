@@ -1,0 +1,31 @@
+# -----------------------------------------------------------------------------
+# PV 시나리오: StatefulSet + volumeClaimTemplates + 노드 분산
+# 노드 롤링 시 볼륨 이전/재스케줄·안티어피니티 트러블슈팅용
+# -----------------------------------------------------------------------------
+
+replicaCount: 2
+
+persistence:
+  enabled: true
+  mountPath: /data
+  size: 4Gi
+  storageClass: gp3
+
+statefulset:
+  enabled: true
+
+# StatefulSet 파드 노드 분산. 재사용 시 Chart 이름에 맞게 matchLabels 수정.
+scheduling:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: upgrade-test-app
+          topologyKey: kubernetes.io/hostname
+
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway

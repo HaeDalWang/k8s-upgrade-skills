@@ -1,0 +1,7 @@
+apiVersion: v2
+name: upgrade-test-app
+description: ArgoCD 업그레이드·트러블슈팅 테스트용 샘플 앱 (values 변형으로 PDB/PV 시나리오 배포)
+type: application
+version: 0.1.0
+appVersion: "1.0"
+kubeVersion: ">=1.24"
