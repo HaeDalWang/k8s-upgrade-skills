@@ -233,7 +233,6 @@ resource "kubectl_manifest" "karpenter_default_node_class" {
       - tags:
           karpenter.sh/discovery: ${module.eks.cluster_name}
       securityGroupSelectorTerms:
-      - id: ${module.eks.cluster_primary_security_group_id}
       - id: ${module.eks.node_security_group_id}
       blockDeviceMappings:
       - deviceName: /dev/xvda
