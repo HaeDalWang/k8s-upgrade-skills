@@ -62,3 +62,8 @@ variable "psmdb-operator_chart_version" {
   description = "Percona Server for MongoDB Operator 차트 버전"
   type        = string
 }
+
+variable "opensearch_chart_version" {
+  description = "OpenSearch 차트 버전"
+  type        = string
+}
