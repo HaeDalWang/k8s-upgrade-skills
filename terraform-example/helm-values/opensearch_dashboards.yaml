@@ -1,0 +1,71 @@
+replicaCount: 1
+
+opensearchHosts: "https://opensearch-cluster-master:9200"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
+
+service:
+  type: ClusterIP
+  port: 5601
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: ${domain_name}
+  hosts:
+    - host: ${domain_name}
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: opensearch-dashboards
+              port:
+                number: 5601
+
+# https://github.com/opensearch-project/OpenSearch-Dashboards/blob/main/config/opensearch_dashboards.yml
+config:
+  opensearch_dashboards.yml: |
+    server.host: 0.0.0.0
+    opensearch.hosts: ["https://opensearch-cluster-master:9200"]
+    opensearch.ssl.verificationMode: none
+    # 인증서 사용 시 주석 해제한뒤 해당 경로에 demo용 또는 실제 사용할 인증서 root-ca.pem 복사
+    # opensearch.ssl.certificateAuthorities: ["/usr/share/opensearch-dashboards/config/certs/root-ca.pem"]
+    # 대시보드 백엔드가 OpenSearch에 접속할 때 사용 (kibanaserver = 내부 서비스 계정)
+    opensearch.username: kibanaserver
+    opensearch.password: kibanaserver
+    # UI 로그인 계정: admin / 비밀번호 = OPENSEARCH_INITIAL_ADMIN_PASSWORD (logging.tf에서 Test1234! 설정)
+    # --- admin 비밀번호를 모를 때 (401, 초기 비밀번호 미적용) ---
+    # [방법 A] 데이터 초기화 후 admin/Test1234! 복구 (가장 단순)
+    #   1. kubectl delete pvc -n logging -l app.kubernetes.io/name=opensearch
+    #   2. kubectl delete pod -n logging -l app.kubernetes.io/name=opensearch
+    #   3. 파드 재기동 후 OPENSEARCH_INITIAL_ADMIN_PASSWORD가 적용됨 → admin / Test1234! 로그인
+    # [방법 B] 데이터 유지 시: opensearch.yaml에서 plugins.security.ssl.http.enabled: true 로 변경 후
+    #   securityadmin.sh로 internal_users.yml(admin 해시) 적용 (문서: opensearch.org/docs/latest/security/configuration/security-admin/)
+
+# Fargate 회피 + HA를 위한 배치 전략
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: eks.amazonaws.com/compute-type
+              operator: DoesNotExist
+  # 각 Dashboard 파드를 다른 노드에 배치 (HA)
+  # podAntiAffinity:
+  #   preferredDuringSchedulingIgnoredDuringExecution:
+  #     - weight: 100
+  #       podAffinityTerm:
+  #         labelSelector:
+  #           matchExpressions:
+  #             - key: app.kubernetes.io/name
+  #               operator: In
+  #               values:
+  #                 - opensearch-dashboards
+  #         topologyKey: kubernetes.io/hostname

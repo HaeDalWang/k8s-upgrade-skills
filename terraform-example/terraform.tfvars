@@ -24,3 +24,5 @@ keda_chart_version                         = "2.18.0"
 
 pg-operator_chart_version = "2.8.2"
 psmdb-operator_chart_version = "1.21.3"
+
+opensearch_chart_version    = "3.3.0"
