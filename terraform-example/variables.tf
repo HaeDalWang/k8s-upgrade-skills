@@ -52,3 +52,13 @@ variable "keda_chart_version" {
   description = "KEDA 차트 버전"
   type        = string
 }
+
+variable "pg-operator_chart_version" {
+  description = "Percona Server for PostgreSQL Operator 차트 버전"
+  type        = string
+}
+
+variable "psmdb-operator_chart_version" {
+  description = "Percona Server for MongoDB Operator 차트 버전"
+  type        = string
+}

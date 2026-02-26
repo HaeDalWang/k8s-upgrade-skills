@@ -1,0 +1,96 @@
+# Spec 파일을 참고하여 작성
+# https://docs.percona.com/percona-operator-for-mongodb/operator.html
+apiVersion: psmdb.percona.com/v1
+kind: PerconaServerMongoDB
+metadata:
+  name: mongodb-cluster
+  namespace: mongodb
+  # 삭제 시 Secondary 파드 부터 순차적으로 삭제되도록
+  finalizers:
+    - percona.com/delete-psmdb-pods-in-order
+  
+spec:
+  crVersion: 1.22.1
+  updateStrategy: SmartUpdate
+
+  image: percona/percona-server-mongodb:8.0.12-4
+  initImage: percona/percona-server-mongodb-operator:1.21.1
+
+  # Operator가 자동으로 업그레이드 하지 않도록 설정
+  upgradeOptions:
+    apply: Never
+
+  # 데이터베이스 인증정보
+  secrets:
+    users: mongodb-cluster-secrets
+    encryptionKey: mongodb-cluster-encryption-key
+
+  # 실제 데이터베이스 설정
+  replsets:
+  - name: rs0
+    size: 3  # HA를 위해 최소 3개 (Primary 1개 + Secondary 2개)
+    affinity:
+      antiAffinityTopologyKey: "kubernetes.io/hostname"
+      # Fargate 회피 + DB 전용 NodePool (karpenter.sh/nodepool: database)
+      advanced:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: eks.amazonaws.com/compute-type
+                    operator: DoesNotExist
+                  - key: karpenter.sh/nodepool
+                    operator: In
+                    values:
+                    - database
+    # AZ별 파드 분산 배치 , AZ당 1개의 파드만 배치
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: percona-server-mongodb
+    podDisruptionBudget:
+      maxUnavailable: 1
+    expose:
+      enabled: false
+      type: ClusterIP
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+      requests:
+        cpu: "512m"
+        memory: "512Mi"
+    volumeSpec:
+      persistentVolumeClaim:
+        storageClassName: gp3
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 20Gi
+    # Hidden 복제본 기능 비활성화 (별도의 백업/분석 불필요)
+    hidden:
+      enabled: false
+      size: 1  # enabled: false여도 필수 필드
+    # 논베팅 기능 비활성화 (멀티 리전 배포 시 고려)
+    nonvoting:
+      enabled: false
+      size: 1  # enabled: false여도 필수 필드
+    #  어비터 기능 비활성화 (이미 3개의 파드가 있으므로 어비터 필요 없음)
+    arbiter:
+      enabled: false
+      size: 1  # enabled: false여도 필수 필드
+
+  # 별도의 샤딩 클러스터 설정이 불필요함으로 비활성화
+  sharding:
+    enabled: false
+  # 백업 기능 비활성화
+  backup:
+    enabled: false
+    image: perconalab/percona-server-mongodb-operator:main-backup  # enabled: false여도 필수 필드
+  # 별도의 Fluentbit 설정이 불필요함으로 비활성화
+  logcollector:
+    enabled: false
+    image: perconalab/fluentbit:main-logcollector
