@@ -49,10 +49,6 @@ resource "helm_release" "keda" {
   version    = var.keda_chart_version
   namespace  = kubernetes_namespace_v1.keda.metadata[0].name
 
-  # 기본값 설치
-  # values = [
-  # ]
-
   depends_on = [
     helm_release.karpenter
   ]
