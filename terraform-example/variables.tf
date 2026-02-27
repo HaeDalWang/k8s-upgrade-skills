@@ -77,3 +77,8 @@ variable "fluentbit_chart_version" {
   description = "Fluentbit 차트 버전"
   type        = string
 }
+
+variable "valkey_chart_version" {
+  description = "Valkey (Redis-compatible) 차트 버전"
+  type        = string
+}

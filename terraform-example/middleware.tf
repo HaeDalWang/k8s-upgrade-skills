@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # MSA Demo 전용 미들웨어: Valkey (Redis-compatible) pub/sub 이벤트 브로커
-# 서비스명: valkey-master.middleware.svc.cluster.local:6379
+# 서비스명: valkey-production.middleware.svc.cluster.local:6379
 # -----------------------------------------------------------------------------
 
 resource "kubernetes_namespace_v1" "middleware" {

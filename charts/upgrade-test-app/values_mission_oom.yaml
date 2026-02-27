@@ -1,0 +1,20 @@
+# -----------------------------------------------------------------------------
+# 미션: oom
+# 증상: 메모리 폭주 → OOMKilled (Exit code 137)
+# 목표: kubectl describe pod 로 OOMKilled 확인, limits 상향 또는 코드 수정
+#
+# 적용: helm upgrade ... -f values.yaml -f <app>-values.yaml -f values_mission_oom.yaml
+# -----------------------------------------------------------------------------
+
+env:
+  - name: MISSION
+    value: "oom"
+
+# limits.memory 를 의도적으로 낮게 설정하여 OOMKill 가속
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 100Mi  # 낮은 limit → OOMKilled 유발

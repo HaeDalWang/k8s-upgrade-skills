@@ -1,0 +1,68 @@
+# -----------------------------------------------------------------------------
+# pg-crud: Go net/http + PostgreSQL CRUD + Valkey pub/sub
+# 기본 사용: helm upgrade --install pg-crud ./upgrade-test-app \
+#   -f values.yaml -f values_pg_crud.yaml -n workload
+#
+# PostgreSQL PgBouncer 엔드포인트:
+#   host=cluster1-pgbouncer.postgresql.svc.cluster.local port=5432
+# Secret: cluster1-pguser-demo (Percona PG Operator 자동 생성)
+#   키: host, port, user, password, dbname, pgbouncer-host, pgbouncer-port
+# -----------------------------------------------------------------------------
+
+image:
+  repository: <REGISTRY>/pg-crud  # 빌드 후 교체
+  tag: "latest"
+  pullPolicy: Always
+
+replicaCount: 2
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+env:
+  - name: PG_DSN
+    valueFrom:
+      secretKeyRef:
+        name: pg-crud-secret
+        key: PG_DSN
+  - name: VALKEY_HOST
+    value: "valkey-production.middleware.svc.cluster.local"
+  - name: VALKEY_PORT
+    value: "6379"
+  - name: VALKEY_PASSWORD
+    value: "Test1234!"  # middleware.tf auth.aclUsers.default.password와 동일
+  - name: WORKER_INTERVAL
+    value: "5"
+  - name: MISSION
+    value: ""
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 128Mi
+
+scheduling:
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway

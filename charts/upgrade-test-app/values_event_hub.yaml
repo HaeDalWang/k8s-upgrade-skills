@@ -1,0 +1,56 @@
+# -----------------------------------------------------------------------------
+# event-hub: Node.js Express + Valkey sub + 이벤트 집계 대시보드
+# 기본 사용: helm upgrade --install event-hub ./upgrade-test-app \
+#   -f values.yaml -f values_event_hub.yaml -n workload
+# -----------------------------------------------------------------------------
+
+image:
+  repository: <REGISTRY>/event-hub  # 빌드 후 교체
+  tag: "latest"
+  pullPolicy: Always
+
+replicaCount: 1
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+command: ["node", "index.js"]
+
+env:
+  - name: VALKEY_HOST
+    value: "valkey-production.middleware.svc.cluster.local"
+  - name: VALKEY_PORT
+    value: "6379"
+  - name: VALKEY_PASSWORD
+    value: "Test1234!"  # middleware.tf auth.aclUsers.default.password와 동일
+  - name: MONGO_CRUD_URL
+    value: "http://mongo-crud.workload.svc.cluster.local"
+  - name: PG_CRUD_URL
+    value: "http://pg-crud.workload.svc.cluster.local"
+  - name: MISSION
+    value: ""
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

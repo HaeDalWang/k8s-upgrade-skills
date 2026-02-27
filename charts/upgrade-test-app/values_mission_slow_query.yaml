@@ -1,0 +1,21 @@
+# -----------------------------------------------------------------------------
+# 미션: slow-query (pg-crud 전용)
+# 증상: INSERT 5초 대기 → readinessProbe 실패 → Pod Unready
+# 목표: kubectl exec pg-crud -- psql ... -c "SELECT * FROM pg_stat_activity"
+#       로 슬로우 쿼리 확인 후 MISSION="" 로 롤백
+#
+# 적용: helm upgrade ... -f values.yaml -f values_pg_crud.yaml -f values_mission_slow_query.yaml
+# -----------------------------------------------------------------------------
+
+env:
+  - name: MISSION
+    value: "slow-query"
+
+# readinessProbe failureThreshold 낮춰서 Unready 빨리 감지
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 2
