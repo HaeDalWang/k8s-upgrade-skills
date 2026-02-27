@@ -94,6 +94,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          platforms: linux/amd64  # EKS 노드 아키텍처
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
