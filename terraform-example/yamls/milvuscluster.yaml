@@ -1,0 +1,82 @@
+# Milvus Operator CR (v1beta1). 테스팅용 최소 구성, 데이터 미사용.
+# 참고: https://milvus.io/docs/ko/v2.4.x/configure_operator.md (tab=component)
+# CRD: https://milvus-io.github.io/milvus-operator/docs/CRD/milvus.html
+---
+apiVersion: milvus.io/v1beta1
+kind: Milvus
+metadata:
+  name: milvus
+  namespace: default
+spec:
+  mode: standalone
+  components:
+    enableRollingUpdate: true
+    image: milvusdb/milvus:v2.4.23
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    nodeSelector:
+      karpenter.sh/nodepool: milvus
+    standalone:
+      serviceType: ClusterIP
+  dependencies:
+    # Bitnami etcd. 무중단 리더 이양: docs/ETCD 업그레이드 다운타임 최소화 방안.md
+    etcd:
+      external: false
+      inCluster:
+        deletionPolicy: Retain
+        values:
+          replicaCount: 3
+          # 롤링/노드 교체 시 멤버 강제 탈퇴 비활성화 → 재시작 후 재합류 가능
+          removeMemberOnContainerTermination: false
+          # PreStop(move-leader) + sleep 15 완수 시간
+          terminationGracePeriodSeconds: 90
+          # Multi-AZ 네트워크 지터 완화 (기본 100ms/1000ms → 250ms/2500ms)
+          extraEnvVars:
+            - name: ETCD_HEARTBEAT_INTERVAL
+              value: "250"
+            - name: ETCD_ELECTION_TIMEOUT
+              value: "2500"
+          # 종료 전 리더면 move-leader로 팔로워에게 이양 후 드레인 대기
+          lifecycleHooks:
+            preStop:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    set -o pipefail
+                    source /opt/bitnami/scripts/libetcd.sh
+                    echo "Initiating preStop hook for zero-downtime shutdown..."
+                    AM_LEADER=$(etcdctl endpoint status | grep $(hostname) | cut -d ',' -f 5 | tr -d ' ')
+                    if [ "$AM_LEADER" = "true" ]; then
+                      echo "Current node is the LEADER. Finding a follower for transfer..."
+                      NEW_LEADER=$(etcdctl endpoint status | grep -v $(hostname) | cut -d ',' -f 2 | tr -d ' ' | tail -n 1)
+                      if [ -n "$NEW_LEADER" ]; then
+                        echo "Executing move-leader to member ID: $NEW_LEADER"
+                        etcdctl move-leader $NEW_LEADER
+                        echo "Leadership transferred. Sleeping 15s for connection draining..."
+                        sleep 15
+                      else
+                        echo "Error: No active follower found. Falling back to default shutdown."
+                        sleep 5
+                      fi
+                    else
+                      echo "Current node is a FOLLOWER. Sleeping 5s for connection draining..."
+                      sleep 5
+                    fi
+    storage:
+      external: false
+      type: MinIO
+      inCluster:
+        deletionPolicy: Retain
+        values:
+          mode: standalone
+          persistence:
+            size: 50Gi
+  config: {}
