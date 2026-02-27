@@ -110,8 +110,10 @@ module "karpenter" {
   version   = "21.10.1" # 최신화 2025년 12월 31일
   namespace = kubernetes_namespace_v1.karpenter.metadata[0].name
 
-  cluster_name                  = module.eks.cluster_name
-  node_iam_role_name            = "${module.eks.cluster_name}-node-role"
+  cluster_name       = module.eks.cluster_name
+  node_iam_role_name = "${module.eks.cluster_name}-node-role"
+  # name_prefix 사용 시 매 plan마다 role 이름이 바뀌어 attachment replace 유발 가능 → 고정 이름 사용
+  node_iam_role_use_name_prefix = false
 
   # Pod Identity는 Fargate을 지원하지 않음, IRSA을 karpenter 모듈이 지원하지않음 그러므로 전부 false 후
   # 신뢰관계 정책을 직접 부여하는 방식으로 변경

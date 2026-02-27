@@ -43,11 +43,11 @@ spec:
                     operator: In
                     values:
                     - database
-    # AZ별 파드 분산 배치 , AZ당 1개의 파드만 배치
+    # AZ별 파드 분산 배치. ScheduleAnyway로 초기 부트스트랩 시 StatefulSet 순서(0→1→2) 교착 방지
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: topology.kubernetes.io/zone
-        whenUnsatisfiable: DoNotSchedule
+        whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
             app.kubernetes.io/name: percona-server-mongodb

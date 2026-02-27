@@ -67,3 +67,8 @@ variable "opensearch_chart_version" {
   description = "OpenSearch 차트 버전"
   type        = string
 }
+
+variable "milvus_operator_chart_version" {
+  description = "Milvus Operator 차트 버전"
+  type        = string
+}
