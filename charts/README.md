@@ -39,21 +39,20 @@ ArgoCD가 이 디렉터리(또는 이 레포의 `charts/` 경로)를 Helm 소스
 
 ## 이미지 빌드
 
+EKS 노드는 linux/amd64. Mac(arm64)에서 로컬 빌드 시 `--platform linux/amd64` 필수.
+
 ```bash
 # mongo-crud
-docker build -t <REGISTRY>/mongo-crud:latest apps/mongo-crud/
-docker push <REGISTRY>/mongo-crud:latest
+docker buildx build --platform linux/amd64 -t svvwac98/msa-demo-apps:mongo-crud-latest apps/mongo-crud/ --push
 
 # pg-crud
-docker build -t <REGISTRY>/pg-crud:latest apps/pg-crud/
-docker push <REGISTRY>/pg-crud:latest
+docker buildx build --platform linux/amd64 -t svvwac98/msa-demo-apps:pg-crud-latest apps/pg-crud/ --push
 
 # event-hub
-docker build -t <REGISTRY>/event-hub:latest apps/event-hub/
-docker push <REGISTRY>/event-hub:latest
+docker buildx build --platform linux/amd64 -t svvwac98/msa-demo-apps:event-hub-latest apps/event-hub/ --push
 ```
 
-빌드 후 각 values 파일의 `image.repository` 를 교체한다.
+CI(GitHub Actions)는 apps/ 변경 시 자동 빌드·푸시 (platforms: linux/amd64).
 
 ## Secret 준비 예시
 
