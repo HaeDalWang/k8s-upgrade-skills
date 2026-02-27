@@ -98,3 +98,11 @@ resource "helm_release" "milvus_operator" {
   wait          = true
   wait_for_jobs = true
 }
+
+# Milvus CR 배포용
+resource "kubectl_manifest" "milvus" {
+  yaml_body = file("${path.module}/yamls/milvuscluster.yaml")
+  depends_on = [
+    helm_release.milvus_operator
+  ]
+}
