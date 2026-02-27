@@ -88,11 +88,11 @@ resource "kubernetes_namespace_v1" "milvus_operator" {
 }
 # Milvus Operator Helm Release 배포
 resource "helm_release" "milvus_operator" {
-  name             = "milvus-operator"
-  repository       = "https://zilliztech.github.io/milvus-operator/"
-  chart            = "milvus-operator"
-  version          = "${var.milvus_operator_chart_version}"
-  namespace        = kubernetes_namespace_v1.milvus_operator.metadata[0].name
+  name       = "milvus-operator"
+  repository = "https://zilliztech.github.io/milvus-operator/"
+  chart      = "milvus-operator"
+  version    = var.milvus_operator_chart_version
+  namespace  = kubernetes_namespace_v1.milvus_operator.metadata[0].name
 
   # helm install의 --wait 및 --wait-for-jobs 플래그와 동일한 역할
   wait          = true
