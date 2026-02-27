@@ -1,0 +1,16 @@
+{
+  "name": "event-hub",
+  "version": "1.0.0",
+  "description": "MSA Demo: Valkey pub/sub 이벤트 집계 및 트리거 앱",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "redis": "^4.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
