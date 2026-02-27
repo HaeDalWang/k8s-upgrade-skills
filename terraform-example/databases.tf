@@ -91,11 +91,11 @@ resource "kubernetes_namespace_v1" "psmdb_operator" {
 
 # Percona Server for MongoDB Operator Helm Chart
 resource "helm_release" "psmdb_operator" {
-  name = "psmdb-operator"
+  name       = "psmdb-operator"
   repository = "https://percona.github.io/percona-helm-charts/"
-  chart = "psmdb-operator"
-  namespace = kubernetes_namespace_v1.psmdb_operator.metadata[0].name
-  version = var.psmdb-operator_chart_version
+  chart      = "psmdb-operator"
+  namespace  = kubernetes_namespace_v1.psmdb_operator.metadata[0].name
+  version    = var.psmdb-operator_chart_version
 }
 
 # MongoDB Secret은 Operator가 자동으로 생성하므로 Terraform으로 관리하지 않음
@@ -134,11 +134,11 @@ resource "kubernetes_namespace_v1" "pg-operator" {
 
 # Percona Server for PostgreSQL Operator Helm Chart
 resource "helm_release" "pg-operator" {
-  name = "pg-operator"
+  name       = "pg-operator"
   repository = "https://percona.github.io/percona-helm-charts/"
-  chart = "pg-operator"
-  namespace = kubernetes_namespace_v1.pg-operator.metadata[0].name
-  version = var.pg-operator_chart_version
+  chart      = "pg-operator"
+  namespace  = kubernetes_namespace_v1.pg-operator.metadata[0].name
+  version    = var.pg-operator_chart_version
 }
 
 # Percona PostgreSQL CR 싱글 노드 배포용

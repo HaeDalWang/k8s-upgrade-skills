@@ -29,13 +29,13 @@ resource "kubectl_manifest" "argocd_project" {
 # 변수만 바꿔서 기본 / PDB / PV 시나리오 3개 Application, 오토싱크
 # -----------------------------------------------------------------------------
 locals {
-  upgrade_test_app_repo = "https://github.com/HaeDalWang/k8s-upgrade-skills"
-  upgrade_test_app_path = "charts/upgrade-test-app"
+  upgrade_test_app_repo  = "https://github.com/HaeDalWang/k8s-upgrade-skills"
+  upgrade_test_app_path  = "charts/upgrade-test-app"
   upgrade_test_namespace = "workload"
 }
 
 resource "kubectl_manifest" "argocd_app_upgrade_test_default" {
-  yaml_body = <<-YAML
+  yaml_body  = <<-YAML
     apiVersion: argoproj.io/v1alpha1
     kind: Application
     metadata:
@@ -66,7 +66,7 @@ resource "kubectl_manifest" "argocd_app_upgrade_test_default" {
 }
 
 resource "kubectl_manifest" "argocd_app_upgrade_test_pdb" {
-  yaml_body = <<-YAML
+  yaml_body  = <<-YAML
     apiVersion: argoproj.io/v1alpha1
     kind: Application
     metadata:
@@ -98,7 +98,7 @@ resource "kubectl_manifest" "argocd_app_upgrade_test_pdb" {
 }
 
 resource "kubectl_manifest" "argocd_app_upgrade_test_pv" {
-  yaml_body = <<-YAML
+  yaml_body  = <<-YAML
     apiVersion: argoproj.io/v1alpha1
     kind: Application
     metadata:

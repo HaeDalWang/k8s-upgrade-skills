@@ -122,7 +122,7 @@ module "karpenter" {
     data.aws_iam_policy_document.karpenter_controller_assume_role_policy.json
   ]
 
-  iam_policy_name            = "KarpenterController-${module.eks.cluster_name}"
+  iam_policy_name = "KarpenterController-${module.eks.cluster_name}"
 
   # Karpenter가 생성할 노드에 부여할 역할에 기본 정책 이외에 추가할 IAM 정책
   node_iam_role_additional_policies = {
