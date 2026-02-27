@@ -129,51 +129,104 @@ resource "kubectl_manifest" "argocd_app_upgrade_test_pv" {
   depends_on = [kubectl_manifest.argocd_project]
 }
 
-# # Argo CD 애플리케이션 생성 (ingress-controller-test.git)
-# resource "kubernetes_manifest" "argocd_app_ingress_nginx" {
-#   manifest = {
-#     apiVersion = "argoproj.io/v1alpha1"
-#     kind       = "Application"
+# -----------------------------------------------------------------------------
+# MSA Demo 샘플 앱 (미션 오버레이 없음)
+# -----------------------------------------------------------------------------
+resource "kubectl_manifest" "argocd_app_mongo_crud" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: mongo-crud
+      namespace: ${kubernetes_namespace_v1.argocd.metadata[0].name}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: ${local.project}
+      source:
+        repoURL: ${local.upgrade_test_app_repo}
+        targetRevision: HEAD
+        path: ${local.upgrade_test_app_path}
+        helm:
+          releaseName: mongo-crud
+          valueFiles:
+            - values.yaml
+            - values_mongo_crud.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ${local.upgrade_test_namespace}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+  YAML
+  depends_on = [kubectl_manifest.argocd_project]
+}
 
-#     metadata = {
-#       name      = "ezl-app-server"
-#       namespace = kubernetes_namespace_v1.argocd.metadata[0].name
-#       finalizers = [
-#         "resources-finalizer.argocd.argoproj.io"
-#       ]
-#     }
+resource "kubectl_manifest" "argocd_app_pg_crud" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: pg-crud
+      namespace: ${kubernetes_namespace_v1.argocd.metadata[0].name}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: ${local.project}
+      source:
+        repoURL: ${local.upgrade_test_app_repo}
+        targetRevision: HEAD
+        path: ${local.upgrade_test_app_path}
+        helm:
+          releaseName: pg-crud
+          valueFiles:
+            - values.yaml
+            - values_pg_crud.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ${local.upgrade_test_namespace}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+  YAML
+  depends_on = [kubectl_manifest.argocd_project]
+}
 
-#     spec = {
-#       project = kubernetes_manifest.argocd_project.manifest.metadata.name
-
-#       sources = [
-#         {
-#           repoURL        = "https://github.com/HaeDalWang/seungdo-helm-chart.git"
-#           targetRevision = "HEAD"
-#           path           = "ezl-app-server"
-#           helm = {
-#             releaseName = "app-server"
-#             valueFiles = [
-#               "values_dev.yaml"
-#             ]
-#           }
-#         }
-#       ]
-
-#       destination = {
-#         name      = "in-cluster"
-#         namespace = "intgapp"
-#       }
-
-#       syncPolicy = {
-#         syncOptions : ["CreateNamespace=true"]
-#         automated : {}
-#       }
-#     }
-#   }
-
-#   depends_on = [
-#     helm_release.argocd,
-#     kubernetes_manifest.argocd_project
-#   ]
-# }
+resource "kubectl_manifest" "argocd_app_event_hub" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: event-hub
+      namespace: ${kubernetes_namespace_v1.argocd.metadata[0].name}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: ${local.project}
+      source:
+        repoURL: ${local.upgrade_test_app_repo}
+        targetRevision: HEAD
+        path: ${local.upgrade_test_app_path}
+        helm:
+          releaseName: event-hub
+          valueFiles:
+            - values.yaml
+            - values_event_hub.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ${local.upgrade_test_namespace}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+  YAML
+  depends_on = [kubectl_manifest.argocd_project]
+}
