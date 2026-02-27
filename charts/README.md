@@ -57,13 +57,18 @@ CI(GitHub Actions)는 apps/ 변경 시 자동 빌드·푸시 (platforms: linux/a
 ## Secret 준비 예시
 
 ```bash
-# mongo-crud: MONGO_URI Secret
+# mongo-crud: PSMDB(mongodb-cluster-secrets)에서 credential 추출 후 MONGO_URI 생성
+# USER=$(kubectl get secret mongodb-cluster-secrets -n mongodb -o jsonpath='{.data.MONGODB_DATABASE_ADMIN_USER}' | base64 -d)
+# PASS=$(kubectl get secret mongodb-cluster-secrets -n mongodb -o jsonpath='{.data.MONGODB_DATABASE_ADMIN_PASSWORD}' | base64 -d)
 kubectl create secret generic mongo-crud-secret \
-  --from-literal=MONGO_URI="mongodb://userAdmin:PASSWORD@mongodb-cluster-rs0.mongodb.svc.cluster.local/demo?authSource=admin&replicaSet=rs0" \
+  --from-literal=MONGO_URI="mongodb://databaseAdmin:PASSWORD@mongodb-cluster-rs0.mongodb.svc.cluster.local/demo?authSource=admin&replicaSet=rs0" \
   -n workload
+# PASSWORD는 위 명령으로 mongodb-cluster-secrets에서 추출한 값으로 교체
 
-# pg-crud: PG_DSN Secret
-kubectl create secret generic pg-crud-secret \
-  --from-literal=PG_DSN="host=cluster1-pgbouncer.postgresql.svc.cluster.local port=5432 user=demo password=PASSWORD dbname=demo sslmode=disable" \
-  -n workload
+# pg-crud: cluster1-pguser-demo의 pgbouncer-uri 사용 (비밀번호 특수문자 URL 인코딩됨)
+kubectl delete secret pg-crud-secret -n workload 2>/dev/null
+PG_DSN=$(kubectl get secret cluster1-pguser-demo -n postgresql -o jsonpath='{.data.pgbouncer-uri}' | base64 -d)
+PG_DSN="${PG_DSN/postgresql.svc:/postgresql.svc.cluster.local:}?sslmode=require"
+kubectl create secret generic pg-crud-secret --from-literal=PG_DSN="$PG_DSN" -n workload
+kubectl rollout restart deployment -n workload -l app.kubernetes.io/instance=pg-crud
 ```

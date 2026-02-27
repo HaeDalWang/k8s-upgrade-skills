@@ -9,6 +9,14 @@ spec:
   imagePullPolicy: Always
   postgresVersion: 16
 
+  # pg-crud 앱용 demo 사용자·DB (cluster1-pguser-demo Secret 자동 생성)
+  # users 지정 시 기본 cluster1도 명시해야 유지됨
+  users:
+    - name: cluster1
+      databases: [cluster1]
+    - name: demo
+      databases: [demo]
+
   # DB 전용 NodePool 스케줄 (karpenter.sh/nodepool: database)
 
   instances:

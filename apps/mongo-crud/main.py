@@ -18,6 +18,7 @@ import os
 import random
 import string
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import redis
@@ -45,7 +46,7 @@ if MISSION == "wrong-creds":
 # MISSION: conn-exhaust → maxPoolSize=1 로 커넥션 부족 유발
 POOL_SIZE = 1 if MISSION == "conn-exhaust" else 10
 
-app = FastAPI(title="mongo-crud", version="1.0.1")
+app = FastAPI(title="mongo-crud", version="1.0.1", lifespan=lifespan)
 
 # ---------------------------------------------------------------------------
 # MongoDB 클라이언트
@@ -91,10 +92,10 @@ def serialize(doc) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 라이프사이클
+# 라이프사이클 (FastAPI lifespan)
 # ---------------------------------------------------------------------------
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global mongo_client, db
     mongo_client = AsyncIOMotorClient(
         MONGO_URI,
@@ -102,14 +103,10 @@ async def startup():
         serverSelectionTimeoutMS=5000,
     )
     db = mongo_client.get_default_database() if "/" in MONGO_URI.rsplit("@", 1)[-1] else mongo_client["demo"]
-    # DB 연결 검증 (wrong-creds 시 여기서 예외 발생)
     await mongo_client.server_info()
     print(f"[INFO] MongoDB connected. MISSION={MISSION!r}")
     asyncio.create_task(background_worker())
-
-
-@app.on_event("shutdown")
-async def shutdown():
+    yield
     if mongo_client:
         mongo_client.close()
 
