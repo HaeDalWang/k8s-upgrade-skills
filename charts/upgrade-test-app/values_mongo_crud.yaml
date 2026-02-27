@@ -5,8 +5,8 @@
 # -----------------------------------------------------------------------------
 
 image:
-  repository: <REGISTRY>/mongo-crud  # 빌드 후 교체
-  tag: "latest"
+  repository: svvwac98/msa-demo-apps
+  tag: "mongo-crud-latest"
   pullPolicy: Always
 
 replicaCount: 2
