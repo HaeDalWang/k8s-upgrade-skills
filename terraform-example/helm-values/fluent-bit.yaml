@@ -1,0 +1,60 @@
+# workload 네임스페이스 파드 로그만 수집 → OpenSearch 전송 (인덱스: workload-app-%Y.%m)
+# K8s 파일 네이밍 컨벤션으로 I/O 수준에서 네임스페이스 필터링 (grep 불필요)
+# 참고: https://docs.fluentbit.io/manual/pipeline/outputs/opensearch
+priorityClassName: system-node-critical
+
+config:
+  service: |
+    [SERVICE]
+      Daemon                    Off
+      Flush                     1
+      Log_Level                 info
+      Parsers_File              /fluent-bit/etc/parsers.conf
+      Parsers_File              /fluent-bit/etc/conf/custom_parsers.conf
+      HTTP_Server               On
+      HTTP_Listen               0.0.0.0
+      HTTP_Port                 2020
+      Health_Check              On
+
+  inputs: |
+    [INPUT]
+      Name              tail
+      Path              /var/log/containers/*_${app_namespace}_*.log
+      Tag               kube.*
+      multiline.parser  cri
+      Mem_Buf_Limit     50MB
+      Skip_Long_Lines   On
+      Refresh_Interval  10
+
+  filters: |
+    [FILTER]
+      Name                kubernetes
+      Match               kube.*
+      Kube_URL            https://kubernetes.default.svc:443
+      Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+      Kube_Tag_Prefix     kube.var.log.containers.
+      Merge_Log           On
+      Merge_Log_Key       log_processed
+      Keep_Log            Off
+      K8S-Logging.Parser  On
+      K8S-Logging.Exclude Off
+      Use_Kubelet         Off
+      Kubelet_Port        10250
+
+  outputs: |
+    [OUTPUT]
+      Name                es
+      Match               kube.*
+      Host                ${es_host}
+      Port                ${es_port}
+      HTTP_User           ${es_user}
+      HTTP_Passwd         ${es_password}
+      Suppress_Type_Name  On
+      Logstash_Format     On
+      Logstash_Prefix     ${index_prefix}
+      Logstash_DateFormat %Y.%m
+      Replace_Dots        On
+      Retry_Limit         False
+      tls                 ${es_tls}
+      tls.verify          On
