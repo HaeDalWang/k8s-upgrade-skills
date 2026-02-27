@@ -278,6 +278,6 @@ func main() {
 	})
 	mux.HandleFunc("/records/", deleteRecordHandler)
 
-	log.Printf("[INFO] Listening on :8080")
+	log.Printf("[INFO] pg-crud listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

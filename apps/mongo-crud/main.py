@@ -45,7 +45,7 @@ if MISSION == "wrong-creds":
 # MISSION: conn-exhaust → maxPoolSize=1 로 커넥션 부족 유발
 POOL_SIZE = 1 if MISSION == "conn-exhaust" else 10
 
-app = FastAPI(title="mongo-crud", version="1.0.0")
+app = FastAPI(title="mongo-crud", version="1.0.1")
 
 # ---------------------------------------------------------------------------
 # MongoDB 클라이언트
