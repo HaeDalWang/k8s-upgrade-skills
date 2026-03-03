@@ -7,10 +7,10 @@ vpc_cidr    = "10.222.0.0/16"
 domain_name = "seungdobae.com" # 실제 사용 도메인으로 변경
 
 # EKS
-eks_cluster_version = "1.34"
+eks_cluster_version = "1.33"
 
 # EKS 노드 AMI 별칭 (클러스터 버전에 맞게 갱신 필요)
-eks_node_ami_alias_al2023       = "al2023@v20260209"
+eks_node_ami_alias_al2023       = "al2023@v20260224"
 eks_node_ami_alias_bottlerocket = "bottlerocket@1.55.0"
 
 # Helm 차트 버전 (현재 클러스터 배포 버전과 동일하게 유지)
