@@ -1,11 +1,14 @@
-# Terraform EKS 업그레이드 — 참조
+# Terraform EKS Upgrade — Reference
 
-## 완료 보고 형식
+## Completion Report Template
 
-모든 Phase 완료 후 다음 형식으로 결과를 보고한다:
+After all phases are complete, generate the report below.
+Use the language specified by `output_language` in recipe.md (default: Korean).
+
+### Korean Template (output_language: ko)
 
 ```
-업그레이드 완료 - EKS {현재버전} → {대상버전}
+업그레이드 완료 — EKS {CURRENT_VERSION} → {TARGET_VERSION}
 
 실행된 작업 (순서 준수)
 
@@ -16,42 +19,92 @@
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
 │ Phase 1  │ terraform.tfvars             │ 버전 및 AMI alias 업데이트 완료  │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
-│ Phase 2  │ Control Plane                │ {현재버전} → {대상버전} ACTIVE   │
+│ Phase 2  │ Control Plane                │ {CURRENT_VERSION} → {TARGET_VERSION} ACTIVE │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
 │ Phase 3  │ Add-on (vpc-cni/coredns/...) │ 전부 ACTIVE                     │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
 │ Phase 4  │ Managed Node Group           │ Rolling Update 완료             │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
-│ Phase 5  │ Karpenter 노드               │ Drift 교체 완료                 │
+│ Phase 5  │ Karpenter 노드               │ Drift 교체 완료 / 미사용        │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
-│ Phase 6  │ 전체 Terraform Apply         │ 완료 (변경사항 N개)             │
+│ Phase 6  │ 전체 Terraform Apply         │ 완료 (변경사항 N개) / No changes │
 ├──────────┼──────────────────────────────┼─────────────────────────────────┤
 │ Phase 7  │ 최종 클러스터 검증           │ 전 노드 Ready, 전 Pod Running   │
 └──────────┴──────────────────────────────┴─────────────────────────────────┘
 
 최종 클러스터 상태
-- Control Plane: {대상버전} ACTIVE
-- Managed Node Group: {대상버전} AMI (AL2023)
-- Karpenter 노드: {대상버전} (Bottlerocket)
+- Control Plane: {TARGET_VERSION} ACTIVE
+- Managed Node Group: v{TARGET_VERSION}.x ({AMI_TYPE})
+- Karpenter 노드: v{TARGET_VERSION}.x ({AMI_TYPE}) / 미사용
 - 전체 Pod: Running/Completed
 
 terraform.tfvars 변경 내용
-eks_cluster_version             = "{대상버전}"
-eks_node_ami_alias_al2023       = "al2023@{새AMI}"
-eks_node_ami_alias_bottlerocket = "bottlerocket@{새버전}"
+eks_cluster_version             = "{TARGET_VERSION}"
+eks_node_ami_alias_al2023       = "{NEW_VALUE}"    # {OLD_VALUE} → {NEW_VALUE}
+eks_node_ami_alias_bottlerocket = "{NEW_VALUE}"    # {OLD_VALUE} → {NEW_VALUE}
 ```
 
-## 비상 중단 기준 (Abort Conditions)
+### English Template (output_language: en)
 
-다음 조건 중 하나라도 충족되면 즉시 실행을 중단하고 사용자에게 보고한다:
+```
+Upgrade Complete — EKS {CURRENT_VERSION} → {TARGET_VERSION}
 
-| 조건 | 상황 |
-|------|------|
-| EKS Insights ERROR | 업그레이드 비호환 리소스 존재 |
-| PDB disruptionsAllowed=0 | Drain 시 서비스 중단 불가피 |
-| 노드 NotReady (업그레이드 전) | 클러스터 이미 불안정 상태 |
-| terraform plan에 예상 외 destroy | 의도하지 않은 리소스 삭제 위험 |
-| FailedEvict 이벤트 발생 | PDB 위반으로 Drain 실패 |
-| Add-on status DEGRADED | Add-on 업그레이드 실패 |
-| Pod CrashLoopBackOff 급증 | 버전 호환성 문제 의심 |
-| Control Plane status FAILED | AWS 측 업그레이드 실패 |
+Executed Steps (in order)
+
+┌──────────┬──────────────────────────────┬─────────────────────────────────┐
+│  Phase   │           Target             │            Result               │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 0  │ EKS Insights / PDB / Nodes   │ All PASSING / Safe / Ready      │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 1  │ terraform.tfvars             │ Version & AMI alias updated     │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 2  │ Control Plane                │ {CURRENT_VERSION} → {TARGET_VERSION} ACTIVE │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 3  │ Add-ons (vpc-cni/coredns/..) │ All ACTIVE                      │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 4  │ Managed Node Group           │ Rolling Update complete         │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 5  │ Karpenter Nodes              │ Drift replacement done / N/A    │
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 6  │ Full Terraform Apply         │ Complete (N changes) / No changes│
+├──────────┼──────────────────────────────┼─────────────────────────────────┤
+│ Phase 7  │ Final Cluster Validation     │ All nodes Ready, all pods Running│
+└──────────┴──────────────────────────────┴─────────────────────────────────┘
+
+Final Cluster State
+- Control Plane: {TARGET_VERSION} ACTIVE
+- Managed Node Group: v{TARGET_VERSION}.x ({AMI_TYPE})
+- Karpenter Nodes: v{TARGET_VERSION}.x ({AMI_TYPE}) / Not used
+- All Pods: Running/Completed
+
+terraform.tfvars Changes
+eks_cluster_version             = "{TARGET_VERSION}"
+eks_node_ami_alias_al2023       = "{NEW_VALUE}"    # {OLD_VALUE} → {NEW_VALUE}
+eks_node_ami_alias_bottlerocket = "{NEW_VALUE}"    # {OLD_VALUE} → {NEW_VALUE}
+```
+
+---
+
+## Abort Conditions
+
+If ANY of the following conditions is met, **STOP immediately** and report to the user:
+
+| Condition | Situation | Severity |
+|---|---|---|
+| EKS Insights `ERROR` | Incompatible resources detected for target version | CRITICAL |
+| PDB `disruptionsAllowed == 0` | Node drain will cause service disruption | CRITICAL |
+| Node `NotReady` (pre-upgrade) | Cluster already unstable before upgrade | CRITICAL |
+| `terraform plan` shows unexpected destroy | Unintended resource deletion risk | CRITICAL |
+| `FailedEvict` events during rolling update | PDB blocking drain | HIGH |
+| Add-on status `DEGRADED` / `CREATE_FAILED` | Add-on upgrade failure | HIGH |
+| Pod `CrashLoopBackOff` surge after upgrade | Version compatibility issue suspected | HIGH |
+| Control Plane status `FAILED` | AWS-side upgrade failure | CRITICAL |
+| `terraform apply` exit code != 0 | Infrastructure mutation failed | HIGH |
+| SSM AMI query returns empty | Target version AMI not yet available | MEDIUM |
+
+### On Abort
+
+1. Report the exact error, affected resource, and phase where failure occurred.
+2. Do NOT attempt automatic rollback — EKS control plane upgrades are irreversible.
+3. Suggest the user investigate the root cause before retrying.
+4. If the failure is in Data Plane (Phase 4+) and Control Plane is already upgraded, the cluster is in a mixed-version state. Guide the user to complete the Data Plane upgrade manually if needed.

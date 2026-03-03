@@ -1,50 +1,42 @@
-# Kubernetes 업그레이드 스킬 — 사전정보 (Recipe)
+# Kubernetes 업그레이드 — 요구사항 (Recipe)
 
-스킬 실행 전 이 파일을 채운 뒤, 환경에 맞는 하위 스킬(aws/terraform-eks 또는 on-prem/kubespray)만 사용한다.
+AI가 맨 처음 읽는 요구사항표. 아래 필수 항목을 채우면 자동으로 검증 → 라우팅 → 실행된다.
 
-## 필수 항목
+## 필수 항목 (6개)
 
-| 항목 | 설명 | 예시 |
-|------|------|------|
+| 항목 | 설명 | 허용 값 / 예시 |
+|------|------|----------------|
 | `environment` | 인프라 유형 | `aws` \| `on-prem` |
-| `platform` | 구체 플랫폼 | `eks` \| `kubespray` \| `k3s` (추가 가능) |
-| `iac` | 인프라 as Code | `terraform` \| `helm` \| `none` |
-| `cluster_name` | 클러스터 식별자 | `my-eks-prod` |
-| `current_version` | 현재 K8s 버전 | `1.34` |
-| `target_version` | 목표 버전 | `1.35` |
+| `platform` | 구체 플랫폼 | `eks` \| `kubespray` |
+| `iac` | IaC 도구 | `terraform` \| `none` |
+| `cluster_name` | 클러스터 식별자 (kubectl/aws 대상) | `my-eks-prod` |
+| `current_version` | 현재 K8s 버전 (따옴표 필수) | `"1.34"` |
+| `target_version` | 업그레이드할 버전 (따옴표 필수) | `"1.35"` |
 
-## 조건부/선택 항목
+## 선택 항목
 
-| 항목 | 설명 | 예시 | 비고 |
-|------|------|------|------|
-| `terraform_path` | Terraform 루트 (IaC=terraform일 때) | `./infra/eks` | terraform 사용 시 필수 |
-| `node_type` | 노드 구성 | `managed_node_group` \| `karpenter` \| `kubespray` \| `혼합` | 선택 |
+| 항목 | 기본값 | 설명 |
+|------|--------|------|
+| `output_language` | `ko` | 최종 보고서 언어. `ko` = 한국어, `en` = English |
+| `notes` | (비움) | 특이사항, 제약조건, 추가 지시사항 |
 
-## 작성 예시 (AWS EKS + Terraform)
+## 규칙
 
-```yaml
-environment: aws
-platform: eks
-iac: terraform
-cluster_name: my-eks-prod
-current_version: "1.34"
-target_version: "1.35"
-terraform_path: ./infra/eks
-node_type: 혼합
-```
+- 필수 항목이 **하나라도** 비어 있으면 업그레이드 절차를 시작하지 않는다.
+- `terraform_path`, `kubespray_path` 등 경로는 AI가 프로젝트 구조에서 자동 탐색한다.
+- 마이너 버전은 **1단계씩만** 업그레이드 가능 (1.34 → 1.36 직접 불가).
 
-## 작성 예시 (온프레미스 Kubespray)
+## 작성 (아래 블록 채우기)
 
 ```yaml
-environment: on-prem
-platform: kubespray
-iac: none
-cluster_name: onprem-prod
+environment:        # aws | on-prem
+platform:           # eks | kubespray
+iac:                # terraform | none
+cluster_name:       # 클러스터 식별자
 current_version: "1.34"
 target_version: "1.35"
-node_type: kubespray
+
+# 선택 항목
+output_language: ko   # ko | en
+notes: ""             # 특이사항 기입
 ```
-
----
-
-**가이드라인**: 필수 항목이 비어 있으면 스킬이 업그레이드 절차를 시작하지 않는다. 먼저 이 파일을 채운 뒤 스킬을 실행할 것.
