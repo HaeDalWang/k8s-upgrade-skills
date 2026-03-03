@@ -1,54 +1,63 @@
 ---
 name: terraform-eks-upgrade
-description: Terraform으로 구성된 EKS 클러스터를 무중단(Zero-Downtime)으로 버전 업그레이드할 때 사용. 'EKS 업그레이드', 'terraform으로 EKS 업그레이드', 'EKS 버전 올려줘' 등 요청 시 실행. recipe.md의 cluster_name, current_version, target_version, terraform_path를 사용하며, Control Plane → Add-on → Data Plane 순서와 Phase별 검증 게이트를 준수. .mcp.json의 EKS/Kubernetes MCP 사용.
+description: >
+  Zero-downtime EKS cluster version upgrade managed by Terraform.
+  Follows AWS best-practice order: Control Plane → Add-ons → Data Plane.
+  Uses recipe.md for cluster_name, current_version, target_version; auto-discovers TF_DIR.
+  Trigger keywords: 'EKS upgrade', 'terraform EKS upgrade', 'EKS 버전 업그레이드', 'EKS 버전 올려줘'
 ---
 
-# Terraform EKS 무중단 버전 업그레이드
+# Terraform EKS Zero-Downtime Version Upgrade
 
-Terraform으로 관리되는 EKS 클러스터를 **무중단**으로 버전 업그레이드한다.
-AWS 권장 순서 Control Plane → Add-on → Data Plane을 엄격히 준수하며, 각 Phase 경계에서 검증 통과 후에만 다음 단계로 진행한다.
+Upgrade a Terraform-managed EKS cluster with **zero downtime**.
+Strictly follow the AWS-recommended order: **Control Plane → Add-ons → Data Plane**.
+Each phase boundary requires validation to pass before proceeding.
 
-**MCP**: 이 스킬 실행 시 프로젝트 루트 .mcp.json에 정의된 EKS MCP(`get_eks_insights`, `list_k8s_resources` 등)와 Kubernetes MCP를 사용한다.
-
----
-
-## 전제 조건 (recipe.md 연동)
-
-루트 [recipe.md](recipe.md)에서 다음 값을 사용한다. 비어 있으면 업그레이드를 시작하지 않는다.
-
-| 변수 | recipe 항목 | 용도 |
-|------|-------------|------|
-| CLUSTER_NAME | cluster_name | aws eks / kubectl 대상 |
-| 현재버전 | current_version | 검증·Plan 확인 |
-| 대상버전(target_version) | target_version | 업그레이드 목표 |
-| TF_DIR | terraform_path | terraform plan/apply 작업 디렉터리 |
-
-> **버전 제약**: EKS는 마이너 버전 1단계씩만 업그레이드 가능. 1.33 → 1.35 직접 업그레이드는 불가.
+**MCP**: Use EKS MCP (`get_eks_insights`, `list_k8s_resources`) and Kubernetes MCP from `.mcp.json`.
+If an MCP call fails, fall back to the equivalent AWS CLI / kubectl command shown in each step.
 
 ---
 
-## 실행 계획 (선언 후 진행)
+## Prerequisites (from recipe.md)
+
+Read these values from `recipe.md`. If any is empty, do NOT start the upgrade.
+
+| Variable | Recipe Field | Purpose |
+|---|---|---|
+| `CLUSTER_NAME` | `cluster_name` | Target for aws eks / kubectl commands |
+| `CURRENT_VERSION` | `current_version` | Pre-flight validation |
+| `TARGET_VERSION` | `target_version` | Upgrade target |
+| `TF_DIR` | (auto-discover) | Directory containing `terraform.tfvars` or `*.tf` files — search the project |
+| `EKS_MODULE` | (auto-discover) | Terraform module name for EKS — inspect `*.tf` files in TF_DIR |
+
+> **Version constraint**: EKS supports only minor +1 upgrades. 1.33 → 1.35 is rejected.
+
+---
+
+## Execution Plan (Declare, Then Execute)
+
+Print this plan to the user before starting, filling in the actual version numbers:
 
 ```
-[Phase 0] 사전 검증         → 검증: EKS Insights 전부 PASSING, PDB 충족 가능
-[Phase 1] tfvars 업데이트   → 검증: eks_cluster_version, AMI alias 값 확인
-[Phase 2] Control Plane     → 검증: 클러스터 status=ACTIVE, version={대상버전}
-[Phase 3] Add-on 안전 게이트→ 검증: 모든 Add-on status=ACTIVE
-[Phase 4] Data Plane        → 검증: 모든 노드 Ready, 버전={대상버전}
-[Phase 5] Karpenter 노드    → 검증: Drift 교체 완료, 모든 노드 Ready
-[Phase 6] 전체 Apply        → 검증: terraform apply exit code 0
-[Phase 7] 최종 검증         → 검증: 전 노드 버전 일치, 전 Pod Running
+[Phase 0] Pre-flight Validation     → Gate: EKS Insights PASSING, PDB safe, all nodes Ready
+[Phase 1] Discovery & tfvars Update → Gate: TF_DIR found, version/AMI values updated
+[Phase 2] Control Plane Upgrade     → Gate: cluster status=ACTIVE, version={TARGET_VERSION}
+[Phase 3] Add-on Safety Gate        → Gate: all add-ons status=ACTIVE
+[Phase 4] Data Plane (MNG) Rolling  → Gate: all nodes Ready, version=v{TARGET_VERSION}.x
+[Phase 5] Karpenter Nodes (if any)  → Gate: drift replacement complete, all nodes Ready
+[Phase 6] Full Terraform Sync       → Gate: terraform plan shows no unexpected changes
+[Phase 7] Final Validation          → Gate: cluster healthy, all pods Running
 ```
 
-완료 보고 형식·비상 중단 기준: [reference.md](reference.md) 참조.
+Report format and abort conditions: see [reference.md](reference.md).
 
 ---
 
-## Phase 0: 사전 검증 (Pre-flight)
+## Phase 0: Pre-flight Validation
 
-**목적**: 업그레이드 진행 가능 여부 확인. 하나라도 실패 시 즉시 중단.
+**Purpose**: Confirm the cluster is healthy and the upgrade is safe. If ANY check fails → STOP.
 
-### 0-1. 클러스터 상태
+### 0-1. Cluster Status
 
 ```bash
 aws eks describe-cluster \
@@ -57,148 +66,228 @@ aws eks describe-cluster \
   --output json
 ```
 
-**검증**: `status == "ACTIVE"`. 아니면 중단.
+**Gate**: `status == "ACTIVE"` AND `version == CURRENT_VERSION`. Otherwise STOP.
 
 ### 0-2. EKS Upgrade Readiness Insights
 
-MCP `get_eks_insights` 사용: `category="UPGRADE_READINESS"`, `cluster_name="${CLUSTER_NAME}"`.
+Use MCP `get_eks_insights`: `category="UPGRADE_READINESS"`, `cluster_name="${CLUSTER_NAME}"`.
 
-**검증**: 모든 insight `status == "PASSING"`. WARNING은 협의, ERROR이면 **즉시 중단**.
+Fallback CLI:
+```bash
+aws eks list-insights --cluster-name ${CLUSTER_NAME} \
+  --filter '{categories: ["UPGRADE_READINESS"]}' \
+  --query 'insights[].{name:name, status:insightStatus.status}' --output table
+```
 
-### 0-3. PodDisruptionBudget
+**Gate**:
+- All insights `PASSING` → Proceed.
+- Any insight `WARNING` → Report the specific insight to user and ask whether to proceed.
+- Any insight `ERROR` → **STOP immediately**. Show the insight details.
+
+### 0-3. PodDisruptionBudget Audit
 
 ```bash
 kubectl get pdb --all-namespaces \
   -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,MIN-AVAIL:.spec.minAvailable,MAX-UNAVAIL:.spec.maxUnavailable,ALLOWED-DISRUPT:.status.disruptionsAllowed,CURRENT-HEALTHY:.status.currentHealthy,DESIRED-HEALTHY:.status.desiredHealthy'
 ```
 
-**검증**: `ALLOWED-DISRUPT`가 0인 PDB가 있으면 Drain 차단 → 사용자에게 알리고 조치 후 진행. `minAvailable == replicas`면 Drain 불가 → 협의 필수.
+**Gate**:
+- `ALLOWED-DISRUPT == 0` for any PDB → Drain will be blocked. Report the specific PDB and namespace. Ask user to resolve before proceeding.
+- `minAvailable == replicas` (i.e. DESIRED-HEALTHY == CURRENT-HEALTHY and ALLOWED-DISRUPT == 0) → Drain impossible. **User must adjust PDB or scale up first**.
 
-### 0-4. 대상 버전 AMI 조회
+### 0-4. Target Version AMI Lookup
+
+**Principle**: Only look up AMI types actually used in this project. Never assume AL2/Bottlerocket/GPU — detect from project files.
+
+**0-4-1. Detect AMI types from project**
 
 ```bash
-TARGET_VERSION="${target_version}"  # recipe target_version
+grep -rE 'ami_type|ami_alias|amiSelectorTerms|ami_id|eks_node_ami_alias' \
+  "${TF_DIR}" --include="*.tf" --include="*.tfvars" --include="*.tfvars.example" 2>/dev/null
+```
 
-# AL2023
+From the output, identify which AMI type variables exist (e.g. `eks_node_ami_alias_al2023`, `eks_node_ami_alias_bottlerocket`).
+
+**0-4-2. Query latest AMI per detected type**
+
+For each detected AMI type, query the corresponding SSM path:
+
+| AMI Type Pattern | SSM Path |
+|---|---|
+| `al2023` | `/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/` |
+| `al2` | `/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2/` |
+| `bottlerocket` | `/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}` |
+
+**AL2023 example**:
+```bash
 aws ssm get-parameters-by-path \
-  --path "/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/" \
-  --recursive --query 'Parameters[].Name' --output text | tr '\t' '\n' | \
-  grep -v "recommended" | awk -F '/' '{print $10}' | sed -r 's/.*(v[[:digit:]]+)$/\1/' | sort -u | tail -5
+  --path "/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/x86_64/standard" \
+  --recursive \
+  --query 'Parameters[].Name' --output text \
+  | tr '\t' '\n' | awk -F'/' '{print $NF}' | sort -V | tail -5
+```
 
-# Bottlerocket
+**Bottlerocket example**:
+```bash
 aws ssm get-parameters-by-path \
-  --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}" \
-  --recursive --query 'Parameters[].Name' --output text | tr '\t' '\n' | \
-  grep -v "latest" | awk -F '/' '{print $7}' | sort -u | tail -5
+  --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}/x86_64" \
+  --recursive \
+  --query 'Parameters[].Name' --output text \
+  | tr '\t' '\n' | grep -oP '\d+\.\d+\.\d+' | sort -V | uniq | tail -5
 ```
 
-조회한 최신 AMI/버전을 Phase 1에서 사용.
+**Gate**: At least one AMI version retrieved for each detected type. If SSM returns empty → report and STOP.
 
-### 0-5. 노드 상태
+### 0-5. Node Health
 
-MCP `list_k8s_resources`: `kind="Node"`, `api_version="v1"`, `cluster_name="${CLUSTER_NAME}"`.
+Use MCP `list_k8s_resources`: `kind="Node"`, `api_version="v1"`, `cluster_name="${CLUSTER_NAME}"`.
 
-**검증**: 모든 노드 Ready 조건 True. NotReady 있으면 **즉시 중단**.
+Fallback:
+```bash
+kubectl get nodes \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.conditions[-1].type,READY:.status.conditions[-1].status,VERSION:.status.nodeInfo.kubeletVersion'
+```
+
+**Gate**: ALL nodes `READY=True`. Any `NotReady` → **STOP**.
 
 ---
 
-## Phase 1: terraform.tfvars 업데이트
+## Phase 1: Discovery & terraform.tfvars Update
 
-### 1-1. 현재 값 확인
+### 1-1. Auto-discover TF_DIR
 
-```bash
-grep -E "eks_cluster_version|eks_node_ami_alias" "${TF_DIR}/terraform.tfvars"
-```
-
-### 1-2. 수정 항목
-
-- `eks_cluster_version` = 현재버전 → 대상버전 (recipe)
-- `eks_node_ami_alias_al2023` = al2023@0-4에서 조회한 최신
-- `eks_node_ami_alias_bottlerocket` = bottlerocket@0-4에서 조회한 최신
-
-Edit 도구로 위 3항목 수정.
-
-### 1-3. 재확인
+Search the project for the directory containing Terraform configuration:
 
 ```bash
-grep -E "eks_cluster_version|eks_node_ami_alias" "${TF_DIR}/terraform.tfvars"
+find . -name 'terraform.tfvars' -o -name '*.tf' | head -20
 ```
 
-**검증**: 3항목 모두 대상 값으로 변경됨.
+Identify the directory containing both `terraform.tfvars` and EKS-related `*.tf` files.
+Set `TF_DIR` to this directory path.
+
+### 1-2. Auto-discover EKS Module Name
+
+```bash
+grep -rE 'module\s+"[^"]*"' "${TF_DIR}"/*.tf | grep -iE 'eks|cluster'
+```
+
+The EKS module name (e.g. `module.eks`, `module.eks_cluster`) is needed for targeted plan/apply in Phase 2.
+If multiple candidates exist, inspect the module source to confirm which one wraps `aws_eks_cluster`.
+
+### 1-3. Read Current Values
+
+```bash
+grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
+```
+
+### 1-4. Update Values
+
+Using the edit tool, update these variables in `${TF_DIR}/terraform.tfvars`:
+
+- `eks_cluster_version` → `"${TARGET_VERSION}"`
+- Each `eks_node_ami_alias_*` variable → latest value from Phase 0-4 lookup
+  - Only update variables that actually exist in the file
+  - If current value already matches the latest for TARGET_VERSION, leave unchanged
+
+### 1-5. Verify Update
+
+```bash
+grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
+```
+
+**Gate**: All values reflect the target version. Report the before/after diff to the user.
 
 ---
 
-## Phase 2: Control Plane 업그레이드
+## Phase 2: Control Plane Upgrade
 
-### 2-1. Plan (module.eks만)
-
-```bash
-cd "${TF_DIR}" && terraform plan -target=module.eks 2>&1 | tail -50
-```
-
-**검증**: `aws_eks_cluster.this` version 변경, `aws_eks_node_group.this` release_version 변경 표시, exit 0. 예상 외 리소스 포함 시 사용자 확인.
-
-### 2-2. Apply
+### 2-1. Targeted Plan
 
 ```bash
-cd "${TF_DIR}" && terraform apply -target=module.eks -auto-approve 2>&1
+cd "${TF_DIR}" && terraform plan -target=${EKS_MODULE} 2>&1 | tail -60
 ```
 
-**검증 (완료 후)**:
+**Gate**:
+- `aws_eks_cluster` shows version change `CURRENT_VERSION → TARGET_VERSION` → Expected.
+- `aws_eks_node_group` shows `release_version` change → Expected (rolling update).
+- Any resource with `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**.
+- Exit code 0.
+
+### 2-2. Targeted Apply
 
 ```bash
-aws eks describe-cluster --name "${CLUSTER_NAME}" --query 'cluster.{version:version, status:status}' --output json
+cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
 ```
 
-- `version == 대상버전` AND `status == "ACTIVE"` → Phase 3
-- `status == "UPDATING"` → 대기 후 재확인
-- `status == "FAILED"` → **즉시 중단**, 오류 보고
+This operation typically takes **8–15 minutes** for control plane + node group rolling update.
+
+### 2-3. Poll Until Complete
+
+After apply starts, poll the cluster status every 60 seconds:
+
+```bash
+aws eks describe-cluster --name "${CLUSTER_NAME}" \
+  --query 'cluster.{version:version, status:status}' --output json
+```
+
+- `status == "UPDATING"` → Wait and re-poll.
+- `status == "ACTIVE"` AND `version == TARGET_VERSION` → Proceed to Phase 3.
+- `status == "FAILED"` → **STOP immediately**. Report the error.
 
 ---
 
-## Phase 3: Add-on 안전 게이트
+## Phase 3: Add-on Safety Gate
 
-### 3-1. Add-on 상태
+### 3-1. Add-on Status Check
 
 ```bash
-aws eks list-addons --cluster-name "${CLUSTER_NAME}" --query 'addons[]' --output text | tr '\t' '\n' | while read addon; do
-  aws eks describe-addon --cluster-name "${CLUSTER_NAME}" --addon-name "$addon" \
-    --query '{name:addon.addonName, version:addon.addonVersion, status:addon.status}' --output json
-done
+aws eks list-addons --cluster-name "${CLUSTER_NAME}" --query 'addons[]' --output text \
+  | tr '\t' '\n' | while read addon; do
+    aws eks describe-addon --cluster-name "${CLUSTER_NAME}" --addon-name "$addon" \
+      --query '{name:addon.addonName, version:addon.addonVersion, status:addon.status}' --output json
+  done
 ```
 
-**검증**: 모든 Add-on `status == "ACTIVE"`. UPDATING이면 대기 후 재확인. DEGRADED/CREATE_FAILED면 **즉시 중단**.
+**Gate**:
+- All add-ons `status == "ACTIVE"` → Proceed.
+- `UPDATING` → Wait 30s, re-check (up to 5 minutes).
+- `DEGRADED` or `CREATE_FAILED` → **STOP**.
 
-### 3-2. kube-system Pod
+### 3-2. kube-system Pod Health
 
 ```bash
 kubectl get pods -n kube-system \
-  -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,STATUS:.status.phase,NODE:.spec.nodeName' --sort-by='.metadata.name'
+  -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,STATUS:.status.phase,NODE:.spec.nodeName' \
+  --sort-by='.metadata.name'
 ```
 
-**검증**: 모두 Running. Pending/CrashLoopBackOff 있으면 원인 파악 후 보고.
+**Gate**: All pods `Running` with `READY=True`. If `Pending` or `CrashLoopBackOff` → investigate and report.
 
 ---
 
-## Phase 4: Data Plane (Managed Node Group) 모니터링
+## Phase 4: Data Plane (Managed Node Group) Monitoring
 
-### 4-1. 노드 버전
+The targeted apply in Phase 2 triggers MNG rolling update automatically. Monitor until complete.
 
-```bash
-kubectl get nodes -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,STATUS:.status.conditions[-1].type,READY:.status.conditions[-1].status'
-```
-
-**검증**: 모든 노드 VERSION이 v{대상버전}.x. 이전 버전 노드 있으면 Rolling 진행 중 → 재확인.
-
-### 4-2. FailedEvict
+### 4-1. Node Version Check
 
 ```bash
-kubectl get events --all-namespaces --field-selector reason=FailedEvict --sort-by='.lastTimestamp' | tail -20
+kubectl get nodes \
+  -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,STATUS:.status.conditions[-1].type,READY:.status.conditions[-1].status'
 ```
 
-**검증**: FailedEvict 없음. 있으면 PDB 재확인 후 보고.
+**Gate**: ALL nodes show `VERSION=v${TARGET_VERSION}.x`. If old-version nodes remain, rolling update is still in progress → re-check after 60s.
 
-### 4-3. 비정상 Pod
+### 4-2. FailedEvict Events
+
+```bash
+kubectl get events --all-namespaces --field-selector reason=FailedEvict \
+  --sort-by='.lastTimestamp' | tail -20
+```
+
+**Gate**: No `FailedEvict` events. If present → PDB blocking drain. Report the affected PDB and namespace.
+
+### 4-3. Unhealthy Pods
 
 ```bash
 kubectl get pods --all-namespaces \
@@ -206,95 +295,122 @@ kubectl get pods --all-namespaces \
   -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,REASON:.status.reason'
 ```
 
-**검증**: Pending/CrashLoopBackOff/Error 없음.
+**Gate**: No `Pending`, `CrashLoopBackOff`, or `Error` pods. Transient states during rolling update are acceptable — re-check after 60s.
 
 ---
 
-## Phase 5: Karpenter 노드 (Drift) 모니터링
+## Phase 5: Karpenter Nodes (If Applicable)
 
-Karpenter 미사용 시 이 Phase는 검증만 하고 통과 처리.
+### 5-0. Detect Karpenter Presence
 
-### 5-1. Drift 확인
+```bash
+kubectl get crd nodeclaims.karpenter.sh 2>/dev/null && echo "KARPENTER_DETECTED" || echo "KARPENTER_NOT_FOUND"
+```
+
+- `KARPENTER_NOT_FOUND` → **Skip Phase 5 entirely**. Proceed to Phase 6.
+- `KARPENTER_DETECTED` → Continue with 5-1.
+
+### 5-1. Check Drift Status
 
 ```bash
 kubectl get nodeclaims -o yaml | grep -A5 "type: Drifted"
 ```
 
-또는 MCP `list_k8s_resources`: kind=NodeClaim, api_version=karpenter.sh/v1.
+Or use MCP `list_k8s_resources`: `kind=NodeClaim`, `api_version=karpenter.sh/v1`.
 
-### 5-2. 교체 이벤트
+If AMI aliases were updated in Phase 1, Karpenter's drift detection should trigger automatic node replacement.
+
+### 5-2. Monitor Replacement Events
 
 ```bash
-kubectl get events -n kube-system --field-selector 'involvedObject.kind=Node' --sort-by='.lastTimestamp' | grep -E "Disrupting|Terminating|Launching" | tail -20
+kubectl get events -n kube-system --field-selector 'involvedObject.kind=Node' \
+  --sort-by='.lastTimestamp' | grep -E "Disrupting|Terminating|Launching" | tail -20
 ```
 
-**검증**: PDB 위반 이벤트 없음.
+**Gate**: No PDB violation events during Karpenter disruption.
 
-### 5-3. Karpenter 노드 버전
+### 5-3. Verify Karpenter Node Versions
 
 ```bash
 kubectl get nodes -l karpenter.sh/nodepool \
-  -o custom-columns='NAME:.metadata.name,AMI:.metadata.labels.karpenter\.k8s\.aws/instance-ami-id,VERSION:.status.nodeInfo.kubeletVersion'
+  -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,READY:.status.conditions[-1].status'
 ```
 
-**검증**: 모두 v{대상버전}.x.
+**Gate**: All Karpenter-managed nodes at `v${TARGET_VERSION}.x` and `READY=True`.
 
 ---
 
-## Phase 6: 전체 Terraform Apply
+## Phase 6: Full Terraform Sync
 
-### 6-1. 전체 Plan
+After all component upgrades are complete, run a full plan to catch any remaining drift.
+
+### 6-1. Full Plan
 
 ```bash
-cd "${TF_DIR}" && terraform plan 2>&1 | tail -30
+cd "${TF_DIR}" && terraform plan 2>&1 | tail -40
 ```
 
-**검증**: 파괴적 변경(-/+ destroy) 있으면 **중단**, 사용자 확인.
+**Gate**:
+- `No changes` → Infrastructure fully synced. Skip apply.
+- Non-destructive changes only → Apply.
+- Any `-/+` (destroy-recreate) → **STOP**, report to user.
 
-### 6-2. 전체 Apply
+### 6-2. Full Apply (if needed)
 
 ```bash
 cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
 ```
 
-**검증**: exit code 0.
+**Gate**: Exit code 0.
 
 ---
 
-## Phase 7: 최종 검증
+## Phase 7: Final Validation
 
-### 7-1. 클러스터
+### 7-1. Cluster Version
 
 ```bash
-aws eks describe-cluster --name "${CLUSTER_NAME}" --query 'cluster.{version:version, status:status}' --output json
+aws eks describe-cluster --name "${CLUSTER_NAME}" \
+  --query 'cluster.{version:version, status:status}' --output json
 ```
 
-### 7-2. 노드
+**Gate**: `version == TARGET_VERSION` AND `status == "ACTIVE"`.
+
+### 7-2. All Nodes
 
 ```bash
 kubectl get nodes -o wide --sort-by='.metadata.creationTimestamp'
 ```
 
-**검증**: 모든 노드 Ready, VERSION=v{대상버전}.x.
+**Gate**: ALL nodes `Ready`, ALL versions `v${TARGET_VERSION}.x`.
 
-### 7-3. Pod
+### 7-3. All Pods
 
 ```bash
-kubectl get pods --all-namespaces --field-selector 'status.phase!=Running,status.phase!=Succeeded' 2>/dev/null | grep -v "^NAMESPACE" | grep -v "Completed"
+kubectl get pods --all-namespaces \
+  --field-selector 'status.phase!=Running,status.phase!=Succeeded' 2>/dev/null \
+  | grep -v "^NAMESPACE" | grep -v "Completed"
 ```
 
-**검증**: 출력 없음.
+**Gate**: Empty output (no unhealthy pods).
 
-### 7-4. EKS Insights
+### 7-4. EKS Insights (Post-upgrade)
 
-MCP `get_eks_insights`: category=UPGRADE_READINESS. **검증**: 모두 PASSING.
+Use MCP `get_eks_insights`: `category=UPGRADE_READINESS`.
+
+**Gate**: All insights `PASSING`.
+
+### 7-5. Generate Completion Report
+
+Produce the final report using the template in [reference.md](reference.md), in the language specified by `output_language` in recipe.md.
 
 ---
 
-## 안전 규칙 (Non-negotiable)
+## Safety Rules (Non-negotiable)
 
-1. **버전 스킵 금지**: 1.33 → 1.35 직접 업그레이드 거부
-2. **Control Plane 선행**: Data Plane이 Control Plane보다 상위 버전 금지
-3. **PDB 존중**: FailedEvict 시 강제 진행 금지
-4. **Phase 역순 금지**
-5. **Plan 없는 Apply 금지**: 모든 apply 전 plan 확인
+1. **No version skipping**: Reject 1.33 → 1.35 direct upgrade.
+2. **Control Plane first**: Data Plane must never exceed Control Plane version.
+3. **PDB respect**: If `FailedEvict` occurs, never force-proceed. Report and wait.
+4. **No phase reversal**: Phases execute in strict order 0 → 7.
+5. **No apply without plan**: Every `terraform apply` must be preceded by `terraform plan` review.
+6. **Abort on unexpected destroy**: If plan shows unexpected resource destruction, STOP immediately.
