@@ -1,8 +1,4 @@
 {
-  "enabledMcpjsonServers": [
-    "awslabs.eks-mcp-server"
-  ],
-  "enableAllProjectMcpServers": true,
   "permissions": {
     "allow": [
       "Bash(kubectl config current-context)",
@@ -18,7 +14,16 @@
       "Bash(aws eks describe-addon*)",
       "Bash(aws ssm get-parameters-by-path*)",
       "Bash(terraform plan*)",
-      "Bash(terraform apply*)"
+      "Bash(terraform apply*)",
+      "mcp__awslabs_eks-mcp-server__get_eks_insights",
+      "mcp__awslabs_eks-mcp-server__list_k8s_resources",
+      "Bash(aws eks:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "awslabs.eks-mcp-server"
+  ]
 }
