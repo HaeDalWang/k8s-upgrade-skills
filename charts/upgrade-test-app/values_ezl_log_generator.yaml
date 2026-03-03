@@ -1,0 +1,28 @@
+# -----------------------------------------------------------------------------
+# ezl-log-generator: svvwac98/ezl-app-server-log-generator:v2.0
+# 로그 수집 테스트용 (Fluent Bit → OpenSearch)
+# -----------------------------------------------------------------------------
+
+image:
+  repository: svvwac98/ezl-app-server-log-generator
+  tag: "v2.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 4
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+# 프로브: 앱에 /health 등 없으면 livenessProbe/readinessProbe: {} 로 비활성화
+livenessProbe: {}
+readinessProbe: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

@@ -130,14 +130,14 @@ resource "kubectl_manifest" "argocd_app_upgrade_test_pv" {
 }
 
 # -----------------------------------------------------------------------------
-# MSA Demo 샘플 앱 (미션 오버레이 없음)
+# ezl-log-generator: svvwac98/ezl-app-server-log-generator:v2.0 (로그 수집 테스트)
 # -----------------------------------------------------------------------------
-resource "kubectl_manifest" "argocd_app_mongo_crud" {
+resource "kubectl_manifest" "argocd_app_ezl_log_generator" {
   yaml_body = <<-YAML
     apiVersion: argoproj.io/v1alpha1
     kind: Application
     metadata:
-      name: mongo-crud
+      name: ezl-log-generator
       namespace: ${kubernetes_namespace_v1.argocd.metadata[0].name}
       finalizers:
         - resources-finalizer.argocd.argoproj.io
@@ -148,10 +148,10 @@ resource "kubectl_manifest" "argocd_app_mongo_crud" {
         targetRevision: HEAD
         path: ${local.upgrade_test_app_path}
         helm:
-          releaseName: mongo-crud
+          releaseName: ezl-log-generator
           valueFiles:
             - values.yaml
-            - values_mongo_crud.yaml
+            - values_ezl_log_generator.yaml
       destination:
         server: https://kubernetes.default.svc
         namespace: ${local.upgrade_test_namespace}
@@ -165,39 +165,9 @@ resource "kubectl_manifest" "argocd_app_mongo_crud" {
   depends_on = [kubectl_manifest.argocd_project]
 }
 
-resource "kubectl_manifest" "argocd_app_pg_crud" {
-  yaml_body = <<-YAML
-    apiVersion: argoproj.io/v1alpha1
-    kind: Application
-    metadata:
-      name: pg-crud
-      namespace: ${kubernetes_namespace_v1.argocd.metadata[0].name}
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
-    spec:
-      project: ${local.project}
-      source:
-        repoURL: ${local.upgrade_test_app_repo}
-        targetRevision: HEAD
-        path: ${local.upgrade_test_app_path}
-        helm:
-          releaseName: pg-crud
-          valueFiles:
-            - values.yaml
-            - values_pg_crud.yaml
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: ${local.upgrade_test_namespace}
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=true
-  YAML
-  depends_on = [kubectl_manifest.argocd_project]
-}
-
+# -----------------------------------------------------------------------------
+# MSA Demo 샘플 앱 (mongo-crud, pg-crud: 이미지 미존재/DB 의존성으로 제거)
+# -----------------------------------------------------------------------------
 resource "kubectl_manifest" "argocd_app_event_hub" {
   yaml_body = <<-YAML
     apiVersion: argoproj.io/v1alpha1
