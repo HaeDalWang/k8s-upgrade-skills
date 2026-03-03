@@ -1,6 +1,7 @@
 clusterName: "opensearch-cluster"
 nodeGroup: "master"
 replicas: 3
+singleNode: false
 
 extraEnvs:
   - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
@@ -24,24 +25,23 @@ persistence:
 
 config:
   opensearch.yml: |
-    plugins:
-      security:
-        ssl:
-          transport:
-            pemcert_filepath: esnode.pem
-            pemkey_filepath: esnode-key.pem
-            pemtrustedcas_filepath: root-ca.pem
-            enforce_hostname_verification: false
-          # enabled: true 여야 OPENSEARCH_INITIAL_ADMIN_PASSWORD가 초기 부트스트랩 시 적용됨 (2.12+)
-          http:
-            enabled: true
-            pemcert_filepath: esnode.pem
-            pemkey_filepath: esnode-key.pem
-            pemtrustedcas_filepath: root-ca.pem
-        allow_unsafe_democertificates: true
-        allow_default_init_securityindex: true
-        restapi:
-          roles_enabled: ["all_access", "security_rest_api_access"]
+    # plugins:
+    #   security:
+    #     ssl:
+    #       transport:
+    #         pemcert_filepath: esnode.pem
+    #         pemkey_filepath: esnode-key.pem
+    #         pemtrustedcas_filepath: root-ca.pem
+    #         enforce_hostname_verification: false
+    #       http:
+    #         enabled: true
+    #         pemcert_filepath: esnode.pem
+    #         pemkey_filepath: esnode-key.pem
+    #         pemtrustedcas_filepath: root-ca.pem
+    #     allow_unsafe_democertificates: true
+    #     allow_default_init_securityindex: true
+    #     restapi:
+    #       roles_enabled: ["all_access", "security_rest_api_access"]
   log4j2.properties: |
     # 기본값 수정 X, 덮어쓰기 방식이므로 지우면 기본값이 사라짐
     status = error

@@ -25,7 +25,7 @@ keda_chart_version                         = "2.18.0"
 pg-operator_chart_version    = "2.8.2"
 psmdb-operator_chart_version = "1.21.3"
 
-opensearch_chart_version      = "3.3.0"
+opensearch_chart_version      = "3.5.0"
 fluentbit_chart_version       = "0.55.0"
 milvus_operator_chart_version = "1.3.0"
 

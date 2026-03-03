@@ -20,7 +20,7 @@ config:
     [INPUT]
       Name              tail
       Path              /var/log/containers/*_${app_namespace}_*.log
-      Tag               kube.*
+      Tag               app.*
       multiline.parser  cri
       Mem_Buf_Limit     50MB
       Skip_Long_Lines   On
@@ -28,12 +28,19 @@ config:
 
   filters: |
     [FILTER]
+      Name                multiline
+      Match               app.*
+      multiline.parser    python,go,java
+      multiline.key_content log
+      buffer              On
+
+    [FILTER]
       Name                kubernetes
-      Match               kube.*
+      Match               app.*
       Kube_URL            https://kubernetes.default.svc:443
       Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
       Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
-      Kube_Tag_Prefix     kube.var.log.containers.
+      Kube_Tag_Prefix     app.var.log.containers.
       Merge_Log           On
       Merge_Log_Key       log_processed
       Keep_Log            Off
@@ -42,10 +49,65 @@ config:
       Use_Kubelet         Off
       Kubelet_Port        10250
 
+    [FILTER]
+        Name                nest
+        Match               app.*
+        Operation           lift
+        Nested_under        kubernetes
+        Add_prefix          kubernetes.
+    
+    [FILTER]
+        Name                modify
+        Match               app.*
+        Remove              time
+        Remove              _p
+        Remove              kubernetes.container_hash
+        Remove              kubernetes.container_image
+        Remove              kubernetes.container_name
+        Remove              kubernetes.docker_id
+        Remove              kubernetes.host
+        Remove              kubernetes.namespace_name
+        Remove              kubernetes.pod_id
+        Remove              kubernetes.pod_name
+        Remove              kubernetes.annotations
+
+    [FILTER]
+        Name                nest
+        Match               app.*
+        Operation           lift
+        Nested_under        kubernetes.labels
+        Add_prefix          kubernetes_labels.
+
+    [FILTER]
+        Name                modify
+        Match               app.*
+        Remove              kubernetes_labels.app.kubernetes.io/instance
+        Remove              kubernetes_labels.app.kubernetes.io/managed-by
+        Remove              kubernetes_labels.app.kubernetes.io/name
+        Remove              kubernetes_labels.app.kubernetes.io/version
+        Remove              kubernetes_labels.helm.sh/chart
+        Remove              kubernetes_labels.pod-template-hash
+
+    [FILTER]
+        Name                nest
+        Match               app.*
+        Operation           nest
+        Wildcard            kubernetes_labels.*
+        Nest_under          kubernetes.labels
+        Remove_prefix       kubernetes_labels.
+
+    [FILTER]
+        Name                nest
+        Match               app.*
+        Operation           nest
+        Wildcard            kubernetes.*
+        Nested_under        kubernetes
+        Remove_prefix       kubernetes.
+
   outputs: |
     [OUTPUT]
-      Name                es
-      Match               kube.*
+      Name                opensearch
+      Match               app.*
       Host                ${es_host}
       Port                ${es_port}
       HTTP_User           ${es_user}
@@ -57,4 +119,6 @@ config:
       Replace_Dots        On
       Retry_Limit         False
       tls                 ${es_tls}
-      tls.verify          On
+      # demo 자체서명 인증서 사용 시 Off. 프로덕션은 CA 검증 권장
+      tls.verify          Off
+      Trace_Error         On
