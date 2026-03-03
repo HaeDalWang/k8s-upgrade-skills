@@ -17,7 +17,7 @@ resource "helm_release" "opensearch" {
   values = [
     templatefile("${path.module}/helm-values/opensearch.yaml", {
       # 초기 비밀번호 첫 로그인 시 변경 후 사용
-      initial_admin_password = "Test1234!"
+      initial_admin_password = "Saltware5678!"
     })
   ]
 
@@ -62,7 +62,7 @@ resource "helm_release" "fluent_bit" {
       es_host       = "opensearch-cluster-master"
       es_port       = "9200"
       es_user       = "admin"
-      es_password   = "Test1234!" # OpenSearch initial_admin_password와 동일. 프로덕션은 Secret 사용 권장
+      es_password   = "Saltware5678!"
       es_tls        = "On"
       app_namespace = "workload"
       index_prefix  = "workload-app"
