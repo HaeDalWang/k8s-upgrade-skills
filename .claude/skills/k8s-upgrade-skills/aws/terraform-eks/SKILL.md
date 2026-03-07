@@ -133,8 +133,10 @@ aws ssm get-parameters-by-path \
   --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}/x86_64" \
   --recursive \
   --query 'Parameters[].Name' --output text \
-  | tr '\t' '\n' | grep -oP '\d+\.\d+\.\d+' | sort -V | uniq | tail -5
+  | tr '\t' '\n' | grep -E '[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -t. -k1,1n -k2,2n -k3,3n | uniq | tail -5
 ```
+
+> macOS/Alpine 등 `-P` 미지원 환경을 고려해 POSIX ERE(`-E`)를 사용한다.
 
 **Gate**: At least one AMI version retrieved for each detected type. If SSM returns empty → report and STOP.
 
@@ -289,13 +291,54 @@ kubectl get events --all-namespaces --field-selector reason=FailedEvict \
 
 ### 4-3. Unhealthy Pods
 
+> `--field-selector status.phase!=Running`은 EKS API 서버에서 지원되지 않는다. 반드시 JSON+Python으로 조회한다.
+
 ```bash
-kubectl get pods --all-namespaces \
-  --field-selector 'status.phase!=Running,status.phase!=Succeeded' \
-  -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,REASON:.status.reason'
+kubectl get pods --all-namespaces -o json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+bad = []
+for p in data['items']:
+    phase = p.get('status', {}).get('phase', '')
+    ns    = p['metadata']['namespace']
+    name  = p['metadata']['name']
+    if phase in ('Running', 'Succeeded'):
+        continue
+    # containerStatuses에서 실제 상태 확인
+    cs = p.get('status', {}).get('containerStatuses', [])
+    reasons = [c.get('state', {}).get('waiting', {}).get('reason', '') for c in cs]
+    bad.append({'ns': ns, 'name': name, 'phase': phase, 'reasons': reasons})
+for b in bad:
+    print(f\"{b['ns']}/{b['name']}: {b['phase']} {b['reasons']}\")
+"
 ```
 
-**Gate**: No `Pending`, `CrashLoopBackOff`, or `Error` pods. Transient states during rolling update are acceptable — re-check after 60s.
+**Gate — 3단계 분류 후 판정**:
+
+| 분류 | 조건 | 처리 |
+|---|---|---|
+| **TRANSIENT** | DaemonSet/init 파드가 업그레이드 중인 노드 위에서 Pending | 60s 대기 후 재확인 (최대 5회) |
+| **STALE** | Error/Failed 상태이지만 **동일 owner의 Running 파드가 존재** | `kubectl delete pod -n <ns> <name>` 로 자동 삭제 후 재확인 |
+| **BLOCKING** | CrashLoopBackOff / ImagePullBackOff / Pending (노드 무관) / STALE 삭제 후에도 잔존 | **STOP** — 상세 내역을 사용자에게 보고 |
+
+**STALE 판별 — 동일 owner 확인**:
+```bash
+# owner 확인 (예: ReplicaSet, DaemonSet)
+kubectl get pod -n <NAMESPACE> <POD_NAME> \
+  -o jsonpath='{.metadata.ownerReferences[0].name} {.metadata.ownerReferences[0].kind}'
+
+# 동일 owner 아래 Running 파드가 1개 이상 존재하면 STALE
+kubectl get pods -n <NAMESPACE> \
+  --field-selector=status.phase=Running \
+  -l <same-label-selector> --no-headers | wc -l
+```
+
+**STALE 자동 삭제**:
+```bash
+kubectl delete pod -n <NAMESPACE> <STALE_POD_NAME>
+```
+
+삭제 후 30s 대기 → 재조회하여 잔존 파드 없음 확인.
 
 ---
 
@@ -384,15 +427,52 @@ kubectl get nodes -o wide --sort-by='.metadata.creationTimestamp'
 
 **Gate**: ALL nodes `Ready`, ALL versions `v${TARGET_VERSION}.x`.
 
-### 7-3. All Pods
+### 7-3. All Pods — Final Health Check
+
+> Phase 4-3과 동일하게 JSON+Python으로 조회한다. `--field-selector status.phase!=Running`은 사용 금지.
 
 ```bash
-kubectl get pods --all-namespaces \
-  --field-selector 'status.phase!=Running,status.phase!=Succeeded' 2>/dev/null \
-  | grep -v "^NAMESPACE" | grep -v "Completed"
+kubectl get pods --all-namespaces -o json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+bad = []
+for p in data['items']:
+    phase = p.get('status', {}).get('phase', '')
+    ns    = p['metadata']['namespace']
+    name  = p['metadata']['name']
+    if phase in ('Running', 'Succeeded'):
+        continue
+    cs = p.get('status', {}).get('containerStatuses', [])
+    reasons = [c.get('state', {}).get('waiting', {}).get('reason', '') for c in cs]
+    owner = p['metadata'].get('ownerReferences', [{}])[0].get('kind', 'None')
+    bad.append({'ns': ns, 'name': name, 'phase': phase, 'reasons': reasons, 'owner': owner})
+for b in bad:
+    print(f\"{b['ns']}/{b['name']}: {b['phase']} reasons={b['reasons']} owner={b['owner']}\")
+"
 ```
 
-**Gate**: Empty output (no unhealthy pods).
+**Gate — 3단계 분류 처리 후 완전 클린 상태 확보**:
+
+| 분류 | 조건 | 처리 |
+|---|---|---|
+| **STALE** | Error/Failed 이며 동일 owner 하의 Running 파드 존재 | 즉시 `kubectl delete pod` 후 재확인 |
+| **TRANSIENT** | Pending 이며 노드가 방금 조인 (AGE < 3m) | 90s 대기 후 재확인 (최대 3회) |
+| **BLOCKING** | CrashLoopBackOff / ImagePullBackOff / Pending 장기화 / 삭제 후 재생성 반복 | **STOP** — 사용자에게 상세 보고 후 진행 여부 확인 |
+
+**STALE 정리 절차**:
+```bash
+# 1. 동일 owner 아래 Running 파드가 있는지 확인
+kubectl get pods -n <NAMESPACE> -o wide | grep <OWNER_NAME>
+
+# 2. STALE 파드 삭제
+kubectl delete pod -n <NAMESPACE> <STALE_POD_NAME>
+
+# 3. 30s 대기 후 재조회
+sleep 30
+kubectl get pods -n <NAMESPACE> | grep -v Running | grep -v Completed
+```
+
+**최종 Gate**: 위 절차 완료 후 unhealthy 파드 **0개**. BLOCKING 분류 파드가 1개라도 있으면 완료 보고서를 발행하지 않고 사용자에게 먼저 보고한다.
 
 ### 7-4. EKS Insights (Post-upgrade)
 
@@ -414,3 +494,6 @@ Produce the final report using the template in [reference.md](reference.md), in 
 4. **No phase reversal**: Phases execute in strict order 0 → 7.
 5. **No apply without plan**: Every `terraform apply` must be preceded by `terraform plan` review.
 6. **Abort on unexpected destroy**: If plan shows unexpected resource destruction, STOP immediately.
+7. **No field-selector for pod phase**: `--field-selector status.phase!=Running` is not supported on EKS API server. Always use `kubectl get pods -o json | python3 -c "..."` for phase-based filtering.
+8. **No silent pod ignore**: Never mark a phase Gate as passed while unhealthy pods exist. Classify every non-Running pod (TRANSIENT / STALE / BLOCKING) and resolve before proceeding. STALE pods must be deleted; BLOCKING pods require user confirmation.
+9. **Completion report only after clean state**: The final report must not be issued until Phase 7-3 Gate confirms zero unhealthy pods.
