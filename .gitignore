@@ -6,3 +6,5 @@
 *.tfvars.json
 crash.log
 crash.*.log
+
+.kiro/
