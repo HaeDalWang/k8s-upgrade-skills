@@ -39,6 +39,7 @@ Phase 0에서 아래 순서대로 모든 규칙을 실행한다.
 | 13 | INF-001 | [Terraform 상태 드리프트](infrastructure/terraform-state-drift.md) | HIGH | 항상 |
 | 14 | INF-002 | [AMI 가용성](infrastructure/ami-availability.md) | CRITICAL | 항상 |
 | 15 | INF-003 | [Karpenter 호환성](infrastructure/karpenter-compatibility.md) | HIGH | Karpenter 사용 시 |
+| 16 | INF-004 | [Terraform Recreate 감지](infrastructure/terraform-recreate-detection.md) | CRITICAL | 항상 |
 
 ## 결과 보고 형식
 
