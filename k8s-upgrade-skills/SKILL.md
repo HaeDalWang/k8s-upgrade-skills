@@ -16,7 +16,7 @@ It reads user requirements from `recipe.md`, validates them, and routes to exact
 
 ## Step 1: Read and Validate recipe.md
 
-Read `recipe.md` at the repository root. Extract the YAML block within the `작성` section.
+Find `recipe.md` in the project root or current working directory. Parse the YAML block within the file.
 
 ### 1-1. Required Fields
 
@@ -65,7 +65,7 @@ Match the `(environment, platform, iac)` tuple against the routing table below. 
 | environment | platform | iac | Sub-Skill Path |
 |---|---|---|---|
 | `aws` | `eks` | `terraform` | [aws/terraform-eks/SKILL.md](aws/terraform-eks/SKILL.md) |
-| `on-prem` | `kubespray` | `none` | [on-prem/kubespray/SKILL.md](on-prem/kubespray/SKILL.md) |
+| `on-prem` | `kubespray` | `none` | on-prem/kubespray/SKILL.md *(미구현 — 계획됨)* |
 
 ### Routing Rules
 
@@ -97,15 +97,15 @@ Every sub-skill MUST obey these universal rules:
 
 ### MCP Servers
 
-This skill uses MCP servers defined in `.mcp.json` at the project root:
+This skill can leverage MCP servers for richer data. Configuration method varies by AI tool
+(Claude Code: `.mcp.json`, Kiro: `.kiro/settings/mcp.json`, etc.):
 
 | Server | Purpose | Used By |
 |---|---|---|
 | `awslabs.eks-mcp-server` | EKS Insights, K8s resource listing | AWS sub-skills |
-| `terraform` | Terraform plan/apply | Terraform sub-skills |
-| `kubernetes` | Node/Pod status queries | All sub-skills |
+| `kubernetes-mcp-server` | Node/Pod status queries | All sub-skills |
 
-Ensure MCP servers are active before starting. If a required MCP call fails, fall back to equivalent CLI commands (aws cli, kubectl, terraform).
+MCP servers are optional. If unavailable or a call fails, fall back to equivalent CLI commands (aws cli, kubectl, terraform).
 
 ### Output Language
 
