@@ -53,7 +53,7 @@ output_language: ko       # ko | en
 notes: ""                 # 특이사항
 ```
 
-더 많은 예제는 `recipe.example.yaml`을 참고하세요.
+더 많은 예제는 각 `example/` 하위의 `recipe.md`를 참고하세요.
 
 2. (선택) MCP 서버를 설정하면 Agent가 더 정확한 정보를 활용할 수 있습니다:
 
@@ -143,6 +143,5 @@ Phase 7: 최종 검증        → 클러스터 전체 상태 확인
 │   │       ├── yamls/                 #     업그레이드 위험 시나리오 샘플 (6개)
 │   │       └── ...                    #     network.tf, variables.tf 등
 │   └── kubespray-onprem/              #   온프레미스 Kubespray 예제 (예정)
-├── recipe.example.yaml                 # 업그레이드 요구사항 예제
-└── install.sh                          # 설치 스크립트 (8개 AI 도구 지원)
+├── install.sh                          # 설치 스크립트 (8개 AI 도구 지원) (8개 AI 도구 지원)
 ```
