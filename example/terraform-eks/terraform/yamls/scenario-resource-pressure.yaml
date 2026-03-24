@@ -1,0 +1,101 @@
+# [시나리오] CAP-002: 리소스 압박 — request는 작지만 실제 사용량이 높은 Pod
+#
+# 문제: CPU request가 작아서 초기 배포/스케줄은 문제없이 성공하지만,
+#       실제 CPU 사용량이 limit 근처까지 올라간 상태에서 노드 drain이 발생하면:
+#       1) 남은 노드에 request 기준으로는 스케줄 가능하지만 실제 부하가 집중
+#       2) 여러 Pod가 동시에 한 노드로 몰리면 CPU throttling + 성능 저하
+#       3) NodePool CPU limit(7) 내에서 실제 사용량 합산 시 노드 과부하
+#
+# 구성: resource-hog (request 작음, limit 큼) + stress-injector (부하 생성)
+#
+# 재현: 배포 후 kubectl top pods -n upgrade-risk-demo 로 실제 사용량 확인
+#       → request 대비 실제 사용량이 10배 이상 → drain 시 노드 과부하
+#
+# 조치: request를 실제 사용량에 맞게 상향하거나, LimitRange/ResourceQuota 적용
+---
+# 부하 대상 Pod — request는 작지만 limit은 큼
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-hog
+  namespace: workload
+  labels:
+    scenario: resource-pressure
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: resource-hog
+  template:
+    metadata:
+      labels:
+        app: resource-hog
+    spec:
+      containers:
+        - name: hog
+          image: nginx:stable-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m        # ← 작은 request → 스케줄 쉽게 성공
+              memory: 32Mi
+            limits:
+              cpu: "2"        # ← 큰 limit → 실제 사용량 폭증 가능
+              memory: 512Mi
+---
+# 부하 대상 Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: resource-hog
+  namespace: workload
+spec:
+  selector:
+    app: resource-hog
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# 부하 생성기 — resource-hog에 지속적 HTTP 요청 + 자체 CPU 소모
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stress-injector
+  namespace: workload
+  labels:
+    scenario: resource-pressure
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stress-injector
+  template:
+    metadata:
+      labels:
+        app: stress-injector
+    spec:
+      containers:
+        - name: stress
+          image: busybox:stable
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== 부하 생성 시작: $(date -u +%FT%TZ) ==="
+              while true; do
+                # resource-hog에 HTTP 요청 폭주
+                for i in $(seq 1 50); do
+                  wget -q -O /dev/null http://resource-hog.upgrade-risk-demo.svc.cluster.local/ &
+                done
+                wait
+                # 자체 CPU 소모 (연산 루프)
+                dd if=/dev/urandom bs=1024 count=512 2>/dev/null | md5sum > /dev/null
+              done
+          resources:
+            requests:
+              cpu: 50m        # ← 작은 request
+              memory: 16Mi
+            limits:
+              cpu: "1"        # ← 실제로는 limit까지 사용
+              memory: 64Mi

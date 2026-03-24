@@ -14,7 +14,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: long-running-job
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: long-running-job
 spec:
@@ -47,7 +47,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: long-running-cronjob
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: long-running-job
 spec:

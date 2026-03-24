@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: local-storage-emptydir
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: local-storage
 spec:
@@ -46,7 +46,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: local-storage-hostpath
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: local-storage
 spec:

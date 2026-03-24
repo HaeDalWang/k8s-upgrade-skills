@@ -1,0 +1,71 @@
+# [워크로드] Stateful 검증 — Valkey (Redis-compatible) + PVC
+#
+# 용도: drain 후 PV 재연결 + 데이터 유지 검증
+#       업그레이드 중 StatefulSet이 정상적으로 재스케줄되는지 확인
+#
+# 확인: kubectl exec -n upgrade-test valkey-0 -- valkey-cli SET test "hello"
+#       (drain 후) kubectl exec -n upgrade-test valkey-0 -- valkey-cli GET test
+#       → "hello" 반환되면 데이터 유지 성공
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  namespace: workload
+  labels:
+    app: valkey
+    purpose: upgrade-validation
+spec:
+  replicas: 1
+  serviceName: valkey
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:8-alpine
+          ports:
+            - containerPort: 6379
+          args: ["--appendonly", "yes"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: workload
+spec:
+  clusterIP: None
+  selector:
+    app: valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
