@@ -135,7 +135,14 @@ Phase 7: 최종 검증        → 클러스터 전체 상태 확인
 │           ├── workload-safety/       #       워크로드 안전성 규칙 (6개)
 │           ├── capacity/              #       용량 검증 규칙 (3개)
 │           └── infrastructure/        #       인프라 검증 규칙 (3개)
-├── terraform-example/                  # EKS + Karpenter 참조 Terraform
+├── example/                            # 플랫폼별 참조 인프라
+│   ├── terraform-eks/                  #   EKS + Karpenter Terraform 예제
+│   │   └── terraform/
+│   │       ├── eks.tf                  #     EKS 클러스터, Karpenter, Add-on
+│   │       ├── workload.tf            #     검증용 워크로드 (Valkey, 트래픽 생성기, Deprecated API)
+│   │       ├── yamls/                 #     업그레이드 위험 시나리오 샘플 (6개)
+│   │       └── ...                    #     network.tf, variables.tf 등
+│   └── kubespray-onprem/              #   온프레미스 Kubespray 예제 (예정)
 ├── recipe.example.yaml                 # 업그레이드 요구사항 예제
-└── install.sh                          # 설치 스크립트
+└── install.sh                          # 설치 스크립트 (8개 AI 도구 지원)
 ```
