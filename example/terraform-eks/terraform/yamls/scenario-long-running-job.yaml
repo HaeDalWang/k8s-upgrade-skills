@@ -1,0 +1,78 @@
+# [시나리오] WLS-005: 장시간 실행 Job — drain 시 강제 종료로 작업 유실
+#
+# 문제: activeDeadlineSeconds 없이 수 시간 실행되는 Job이 있을 때
+#       노드 drain이 발생하면 Pod가 강제 종료됨.
+#       restartPolicy=Never이면 재시작 없이 Failed 처리.
+#       restartPolicy=OnFailure이면 처음부터 재실행 (중복 처리 위험).
+#
+# 재현: Job 실행 중 kubectl drain <node> → Job Pod 강제 종료
+#       → Job status: Failed 또는 처음부터 재실행
+#
+# 조치: 업그레이드 전 Job 완료 대기 또는 체크포인트 구현 확인
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: long-running-job
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: long-running-job
+spec:
+  # activeDeadlineSeconds 없음 → 무한 실행 가능   ← 위험
+  # backoffLimit=0 → 실패 시 재시도 없음
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: long-running-job
+    spec:
+      restartPolicy: Never   # ← drain 시 재시작 없이 Failed
+      containers:
+        - name: worker
+          image: busybox:stable
+          command:
+            - sh
+            - -c
+            - |
+              echo "장시간 작업 시작..."
+              sleep 3600   # 1시간 실행 시뮬레이션
+              echo "작업 완료"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+---
+# CronJob 케이스 — 정기 실행 중 drain 겹치면 동일 문제
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: long-running-cronjob
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: long-running-job
+spec:
+  schedule: "0 * * * *"   # 매시 정각
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: long-running-cronjob
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: worker
+              image: busybox:stable
+              command:
+                - sh
+                - -c
+                - |
+                  echo "배치 작업 시작..."
+                  sleep 1800   # 30분 실행
+                  echo "배치 완료"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi

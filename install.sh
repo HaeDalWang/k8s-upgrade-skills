@@ -27,7 +27,7 @@ NC='\033[0m' # No Color
 # 경로 설정
 # ─────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_SRC="${SCRIPT_DIR}/.claude/skills/k8s-upgrade-skills"
+SKILL_SRC="${SCRIPT_DIR}/k8s-upgrade-skills"
 
 if [[ ! -d "${SKILL_SRC}" ]]; then
   echo -e "${RED}[ERROR] 스킬 소스를 찾을 수 없습니다: ${SKILL_SRC}${NC}"

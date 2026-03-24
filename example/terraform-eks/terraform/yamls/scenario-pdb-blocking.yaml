@@ -1,0 +1,52 @@
+# [시나리오] WLS-001: PDB가 drain을 완전 차단하는 케이스
+#
+# 문제: maxUnavailable=0 + minAvailable=replicas 조합으로
+#       노드 drain 시 eviction이 영구 차단됨.
+#       업그레이드 중 해당 노드의 Rolling Update가 멈춤.
+#
+# 재현: kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+#       → "Cannot evict pod as it would violate the pod's disruption budget" 에러
+#
+# 조치: maxUnavailable을 1 이상으로 올리거나, minAvailable을 replicas-1로 낮춤
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: upgrade-risk-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdb-blocking-app
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: pdb-blocking
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pdb-blocking-app
+  template:
+    metadata:
+      labels:
+        app: pdb-blocking-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable-alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+---
+# maxUnavailable=0 → drain 시 eviction 완전 차단
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pdb-blocking-app
+  namespace: upgrade-risk-demo
+spec:
+  maxUnavailable: 0   # ← 위험: drain 불가
+  selector:
+    matchLabels:
+      app: pdb-blocking-app

@@ -1,0 +1,58 @@
+# [시나리오] WLS-003: PV가 특정 AZ에 고정된 StatefulSet — drain 후 재스케줄 불가
+#
+# 문제: EBS PV는 생성된 AZ에 고정됨 (WaitForFirstConsumer).
+#       해당 AZ의 노드가 drain되면 Pod가 다른 AZ로 스케줄되려 하지만
+#       PV가 원래 AZ에 묶여 있어 Pending 상태로 영구 대기.
+#
+# 재현: ap-northeast-2a 노드 drain → Pod가 2b/2c로 스케줄 시도
+#       → "volume node affinity conflict" 에러로 Pending
+#
+# 조치: 동일 AZ에 노드 확보 또는 EFS(multi-AZ) 스토리지로 전환
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ebs-single-az
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pv-zone-locked-app
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: pv-zone-affinity
+spec:
+  replicas: 1
+  serviceName: pv-zone-locked-app
+  selector:
+    matchLabels:
+      app: pv-zone-locked-app
+  template:
+    metadata:
+      labels:
+        app: pv-zone-locked-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable-alpine
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: ebs-single-az   # ← AZ 고정 스토리지
+        resources:
+          requests:
+            storage: 1Gi
