@@ -1,0 +1,7 @@
+# 공통 네임스페이스
+# 파일명 00- 접두사로 kubectl apply -f yamls/ 시 가장 먼저 적용
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workload

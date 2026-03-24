@@ -15,7 +15,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: topology-strict-app
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: topology-spread
 spec:

@@ -1,0 +1,54 @@
+# [워크로드] 트래픽 생성기 — 업그레이드 중 downtime 측정
+#
+# 용도: Valkey에 1초 간격 PING → 응답 실패 시 타임스탬프 기록
+#       업그레이드 후 로그로 downtime 구간 확인
+#
+# 확인: kubectl logs -n upgrade-test deploy/traffic-generator --tail=50
+#       → status=FAIL 구간이 downtime
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-generator
+  namespace: workload
+  labels:
+    app: traffic-generator
+    purpose: downtime-measurement
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-generator
+  template:
+    metadata:
+      labels:
+        app: traffic-generator
+    spec:
+      containers:
+        - name: probe
+          image: busybox:stable
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== 트래픽 생성기 시작: $(date -u +%FT%TZ) ==="
+              SEQ=0
+              FAIL=0
+              while true; do
+                SEQ=$((SEQ+1))
+                TS=$(date -u +%FT%TZ)
+                if echo PING | nc -w 2 valkey.workload.svc.cluster.local 6379 | grep -q PONG; then
+                  echo "$TS seq=$SEQ status=OK"
+                else
+                  FAIL=$((FAIL+1))
+                  echo "$TS seq=$SEQ status=FAIL (total_failures=$FAIL)"
+                fi
+                sleep 1
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

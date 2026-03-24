@@ -23,7 +23,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: pv-zone-locked-app
-  namespace: upgrade-risk-demo
+  namespace: workload
   labels:
     scenario: pv-zone-affinity
 spec:
