@@ -39,7 +39,7 @@ Read these values from `recipe.md`. If any is empty, do NOT start the upgrade.
 Print this plan to the user before starting, filling in the actual version numbers:
 
 ```
-[Phase 0] Pre-flight Validation     → Gate: 15개 규칙 전부 PASS (rules/ 참조)
+[Phase 0] Pre-flight Validation     → Gate: 16개 규칙 전부 PASS (rules/ 참조)
 [Phase 1] Discovery & tfvars Update → Gate: TF_DIR found, version/AMI values updated
 [Phase 2] Control Plane Upgrade     → Gate: cluster status=ACTIVE, version={TARGET_VERSION}
 [Phase 3] Add-on Safety Gate        → Gate: all add-ons status=ACTIVE
@@ -58,7 +58,7 @@ Report format and abort conditions: see [reference.md](reference.md).
 **Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
 모든 검증 규칙은 [rules/](rules/) 디렉토리에 독립 파일로 정의되어 있다.
 
-**실행 방법**: [rules/rule-index.md](rules/rule-index.md)의 순서대로 15개 규칙을 실행한다.
+**실행 방법**: [rules/rule-index.md](rules/rule-index.md)의 순서대로 16개 규칙을 실행한다.
 
 ### 규칙 카테고리 및 실행 순서
 
@@ -67,7 +67,7 @@ Report format and abort conditions: see [reference.md](reference.md).
 | 1 | [common/](rules/common/) | 3개 | 클러스터 상태, 버전 호환성, Add-on 준비 |
 | 2 | [workload-safety/](rules/workload-safety/) | 6개 | PDB, 단일 레플리카, PV AZ, 로컬 스토리지, Job, 토폴로지 |
 | 3 | [capacity/](rules/capacity/) | 3개 | 노드 여유분, 리소스 압박, surge 용량 |
-| 4 | [infrastructure/](rules/infrastructure/) | 3개 | Terraform drift, AMI 가용성, Karpenter 호환성 |
+| 4 | [infrastructure/](rules/infrastructure/) | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
 
 ### 판정 기준
 
@@ -103,6 +103,7 @@ Report format and abort conditions: see [reference.md](reference.md).
 │ INF-001 │ Terraform 드리프트       │ HIGH     │ ✅ PASS  │
 │ INF-002 │ AMI 가용성               │ CRITICAL │ ✅ PASS  │
 │ INF-003 │ Karpenter 호환성         │ HIGH     │ ✅ PASS  │
+│ INF-004 │ Terraform Recreate 감지  │ CRITICAL │ ✅ PASS  │
 └─────────┴──────────────────────────┴──────────┴──────────┘
 
 CRITICAL 실패: 0개 | HIGH 경고: 1개 | MEDIUM 참고: 0개
