@@ -1,0 +1,35 @@
+# [시나리오] WLS-002: PDB 없는 단일 레플리카 — drain 시 서비스 중단
+#
+# 문제: replicas=1이고 PDB가 없으면 drain 시 Pod가 즉시 종료됨.
+#       새 노드에 스케줄되기 전까지 서비스 다운타임 발생.
+#
+# 재현: kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+#       → Pod 즉시 삭제, 재스케줄 전까지 서비스 불가
+#
+# 조치: replicas를 2 이상으로 늘리거나, minAvailable=1 PDB 추가
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: single-replica-app
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: single-replica
+spec:
+  replicas: 1           # ← 위험: 단일 레플리카
+  selector:
+    matchLabels:
+      app: single-replica-app
+  template:
+    metadata:
+      labels:
+        app: single-replica-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable-alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+# PDB 없음 → drain 시 즉시 종료

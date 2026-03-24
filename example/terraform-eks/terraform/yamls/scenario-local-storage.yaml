@@ -1,0 +1,76 @@
+# [시나리오] WLS-004: 로컬 스토리지(emptyDir/hostPath) 의존 Pod — drain 시 데이터 유실
+#
+# 문제: emptyDir은 Pod 종료 시 데이터가 사라짐.
+#       hostPath는 특정 노드에 데이터가 묶여 있어 다른 노드로 이동 불가.
+#       drain 후 재스케줄되면 데이터 유실 또는 기동 실패.
+#
+# 재현: kubectl drain <node> → Pod 재스케줄 후 /cache 데이터 없음
+#       hostPath 케이스는 다른 노드에서 경로 없어 기동 실패 가능
+#
+# 조치: PV(EBS/EFS)로 전환하거나, 데이터 유실 허용 여부 확인 후 진행
+---
+# emptyDir 케이스 — drain 시 캐시 데이터 유실
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-storage-emptydir
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: local-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: local-storage-emptydir
+  template:
+    metadata:
+      labels:
+        app: local-storage-emptydir
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable-alpine
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      volumes:
+        - name: cache
+          emptyDir: {}   # ← 위험: Pod 종료 시 데이터 소멸
+---
+# hostPath 케이스 — 특정 노드에 데이터 고정
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-storage-hostpath
+  namespace: upgrade-risk-demo
+  labels:
+    scenario: local-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: local-storage-hostpath
+  template:
+    metadata:
+      labels:
+        app: local-storage-hostpath
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable-alpine
+          volumeMounts:
+            - name: host-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      volumes:
+        - name: host-data
+          hostPath:
+            path: /var/local-data   # ← 위험: 노드 종속 경로
+            type: DirectoryOrCreate
