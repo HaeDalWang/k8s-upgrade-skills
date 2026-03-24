@@ -6,5 +6,5 @@
 *.tfvars.json
 crash.log
 crash.*.log
-
+.DS_Store
 .kiro/
