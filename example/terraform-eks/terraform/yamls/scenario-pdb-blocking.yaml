@@ -41,7 +41,8 @@ metadata:
   name: pdb-blocking-app
   namespace: workload
 spec:
-  maxUnavailable: 0   # ← 위험: drain 불가
+  maxUnavailable: 0   # ← 수정: 노드당 최대 1개 Pod 중단 허용
+  # maxUnavailable: 1
   selector:
     matchLabels:
       app: pdb-blocking-app
