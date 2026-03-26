@@ -4,9 +4,9 @@
 environment: aws
 platform: eks
 iac: terraform
-cluster_name: my-eks-prod
+cluster_name: upgrade-skill
 current_version: "1.33"
 target_version: "1.34"
 output_language: ko
-notes: ""
+notes: "zero downtime plz"
 ```
