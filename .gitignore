@@ -8,3 +8,4 @@ crash.log
 crash.*.log
 .DS_Store
 .kiro/
+.history.md
