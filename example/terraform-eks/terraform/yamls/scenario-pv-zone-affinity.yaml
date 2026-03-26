@@ -37,6 +37,15 @@ spec:
       labels:
         app: pv-zone-locked-app
     spec:
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: topology.kubernetes.io/zone
+      #               operator: In
+      #               values:
+      #                 - ap-northeast-2c   # ← 노드 2개 이상인 AZ로 고정
       containers:
         - name: app
           image: nginx:stable-alpine
