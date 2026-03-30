@@ -87,12 +87,15 @@ python3 scripts/gate_check.py \
 | `1` | Gate BLOCKED — CRITICAL 실패 존재 | **즉시 중단**. audit.log 내용을 사용자에게 보고. Phase 1 진행 금지 |
 | `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 0-B 진행 |
 
-**스크립트가 검증하는 규칙 (8개)**:
+**스크립트가 검증하는 규칙 (10개)**:
 - COM-001: 클러스터 기본 상태 (노드 Ready, 리소스 압박)
-- COM-002: 버전 호환성 (minor +1 제약, kubelet skew)
+- COM-002: 버전 호환성 (minor +1 제약)
+- COM-002a: kubelet 버전 skew
 - WLS-001: PDB 차단 가능성 (disruptionsAllowed == 0)
 - WLS-002: 단일 레플리카 위험 (replicas == 1 카운트)
 - WLS-003: PV 존 어피니티 (AZ별 노드 수 교차 분석)
+- WLS-004: 로컬 스토리지 Pod (hostPath 감지)
+- WLS-005: 장시간 Job (running time > 30분, restartPolicy=Never)
 - CAP-001: 노드 용량 여유분 (CPU/MEM 사용률)
 - INF-002: AMI 가용성 (SSM Parameter Store 조회)
 
@@ -103,10 +106,8 @@ python3 scripts/gate_check.py \
 gate_check.py가 exit code 0 또는 사용자 승인(exit code 2)을 받은 후에만 실행한다.
 나머지 규칙은 LLM 해석이 필요하므로 [rules/rule-index.md](rules/rule-index.md)를 참조하여 실행한다.
 
-**LLM이 실행하는 규칙 (8개)**:
+**LLM이 실행하는 규칙 (6개)**:
 - COM-003: Add-on 호환성 (AWS API + 해석)
-- WLS-004: 로컬 스토리지 Pod (컨텍스트 의존적)
-- WLS-005: 장시간 Job/CronJob (조건부)
 - WLS-006: 토폴로지 제약 위반 (복합 분석)
 - CAP-002: 리소스 압박 Pod (상태 분류)
 - CAP-003: Surge 용량 (서브넷/EC2 한도)

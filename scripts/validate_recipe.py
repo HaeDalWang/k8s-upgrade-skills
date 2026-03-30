@@ -200,7 +200,37 @@ def main() -> None:
         sys.exit(1)
     else:
         print("✅ 검증 통과 — recipe가 유효합니다.")
-        sys.exit(0)
+
+    # AMI 가용성 사전 경고 (aws cli가 있을 때만)
+    tv = recipe.get("target_version", "")
+    if tv and _check_ami_available(tv) is False:
+        print(f"\n⚠️  경고: {tv} AMI가 아직 미출시일 수 있습니다.")
+        print("   gate_check.py 실행 시 INF-002에서 CRITICAL FAIL이 발생할 수 있습니다.")
+        print("   AWS에서 AMI를 릴리스할 때까지 대기하세요.")
+
+    sys.exit(0)
+
+
+def _check_ami_available(target_version: str):
+    """AMI 가용성 사전 확인. aws cli 없으면 None 반환."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["aws", "ssm", "get-parameters-by-path",
+             "--path",
+             f"/aws/service/eks/optimized-ami/{target_version}"
+             "/amazon-linux-2023/x86_64/standard",
+             "--recursive",
+             "--query", "Parameters | length(@)",
+             "--output", "text"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        count = int(r.stdout.strip()) if r.stdout.strip().isdigit() else 0
+        return count > 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
 
 
 if __name__ == "__main__":

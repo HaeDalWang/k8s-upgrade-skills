@@ -189,9 +189,9 @@ def check_com001(cluster_name: str) -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-# COM-002b: kubelet 버전 skew 검증 (CRITICAL)
+# COM-002a: kubelet 버전 skew 검증 (CRITICAL)
 # ══════════════════════════════════════════════════════════════
-def check_com002_skew(target_version: str) -> None:
+def check_com002a(target_version: str) -> None:
     targ_minor = int(target_version.split(".")[1])
     nodes = kubectl_json("nodes", all_ns=False)
     violations = 0
@@ -202,10 +202,10 @@ def check_com002_skew(target_version: str) -> None:
             violations += 1
 
     if violations > 0:
-        record("COM-002", "CRITICAL", "FAIL",
+        record("COM-002a", "CRITICAL", "FAIL",
                f"kubelet skew > 2 노드 {violations}개")
     else:
-        record("COM-002", "CRITICAL", "PASS",
+        record("COM-002a", "CRITICAL", "PASS",
                "kubelet skew 정상 (모두 ≤ 2)")
 
 
@@ -313,6 +313,84 @@ def check_wls003() -> None:
                f"PV AZ 위험 {risks}개 (drain 시 재스케줄 불가)")
     else:
         record("WLS-003", "CRITICAL", "PASS", "PV AZ 위험 없음")
+
+
+# ══════════════════════════════════════════════════════════════
+# WLS-004: 로컬 스토리지 Pod 데이터 유실 위험 (MEDIUM)
+# ══════════════════════════════════════════════════════════════
+def check_wls004() -> None:
+    pods = kubectl_json("pods", timeout=60)
+    if not pods:
+        record("WLS-004", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+        return
+
+    hostpath_count = 0
+    for pod in pods.get("items", []):
+        ns = pod["metadata"]["namespace"]
+        if ns in SYSTEM_NS:
+            continue
+        phase = pod.get("status", {}).get("phase", "")
+        if phase not in ("Running", "Pending"):
+            continue
+        for vol in pod.get("spec", {}).get("volumes", []):
+            if vol.get("hostPath") is not None:
+                name = pod["metadata"]["name"]
+                path = vol["hostPath"].get("path", "")
+                print(f"  hostPath: {ns}/{name} path={path}",
+                      file=sys.stderr)
+                hostpath_count += 1
+
+    if hostpath_count > 0:
+        record("WLS-004", "MEDIUM", "FAIL",
+               f"hostPath 사용 Pod {hostpath_count}개 (노드 교체 시 데이터 유실)")
+    else:
+        record("WLS-004", "MEDIUM", "PASS",
+               "hostPath 사용 Pod 없음")
+
+
+# ══════════════════════════════════════════════════════════════
+# WLS-005: 장시간 Job/CronJob 중단 위험 (MEDIUM)
+# ══════════════════════════════════════════════════════════════
+def check_wls005() -> None:
+    pods = kubectl_json("pods", timeout=60)
+    if not pods:
+        record("WLS-005", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+        return
+
+    now = datetime.now(timezone.utc)
+    risky_jobs = 0
+    for pod in pods.get("items", []):
+        phase = pod.get("status", {}).get("phase", "")
+        if phase != "Running":
+            continue
+        owners = pod.get("metadata", {}).get("ownerReferences", [])
+        is_job = any(o.get("kind") == "Job" for o in owners)
+        if not is_job:
+            continue
+
+        ns = pod["metadata"]["namespace"]
+        name = pod["metadata"]["name"]
+        start_str = pod.get("status", {}).get("startTime", "")
+        restart_policy = pod.get("spec", {}).get("restartPolicy", "Always")
+
+        if start_str:
+            start_dt = datetime.fromisoformat(
+                start_str.replace("Z", "+00:00"))
+            age_min = (now - start_dt).total_seconds() / 60
+        else:
+            age_min = 0
+
+        if age_min > 30 or restart_policy == "Never":
+            print(f"  Job: {ns}/{name} age={int(age_min)}min "
+                  f"restart={restart_policy}", file=sys.stderr)
+            risky_jobs += 1
+
+    if risky_jobs > 0:
+        record("WLS-005", "MEDIUM", "FAIL",
+               f"위험 Job Pod {risky_jobs}개 (age>30min 또는 restartPolicy=Never)")
+    else:
+        record("WLS-005", "MEDIUM", "PASS",
+               "위험 Job Pod 없음")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -465,7 +543,8 @@ def main() -> None:
     parser.add_argument("--cluster-name", required=True)
     parser.add_argument("--current-version", required=True)
     parser.add_argument("--target-version", required=True)
-    parser.add_argument("--audit-log", default="audit.log")
+    parser.add_argument("--audit-log", default="audit.log",
+                        help="감사 로그 저장 경로 (기본: 현재 디렉토리의 audit.log)")
     args = parser.parse_args()
 
     # 의존성 확인
@@ -485,25 +564,55 @@ def main() -> None:
 
     audit_init(args.cluster_name, args.current_version, args.target_version)
 
+    # ── 전체 규칙 목록 (SKIPPED 추적용) ──
+    ALL_RULES = [
+        "COM-002", "COM-001", "COM-002a",
+        "WLS-001", "WLS-002", "WLS-003", "WLS-004", "WLS-005",
+        "CAP-001", "INF-002",
+    ]
+    executed_rules: list[str] = []
+
+    def track(rule_id: str) -> None:
+        executed_rules.append(rule_id)
+
     # ── 1단계: 공통 검증 ──
     print("── 1단계: 공통 검증 ──")
     check_com002(args.current_version, args.target_version)
-    check_com001(args.cluster_name)
-    check_com002_skew(args.target_version)
+    track("COM-002")
 
-    # ── 2단계: 워크로드 안전성 ──
-    print("\n── 2단계: 워크로드 안전성 ──")
-    check_wls001()
-    check_wls002()
-    check_wls003()
+    # 버전 gap이 0이거나 >1이면 나머지 검증 무의미
+    if critical_fail > 0:
+        for r in ALL_RULES:
+            if r not in executed_rules:
+                record(r, "-", "SKIP", "COM-002 CRITICAL FAIL로 인해 건너뜀")
+    else:
+        check_com001(args.cluster_name)
+        track("COM-001")
+        check_com002a(args.target_version)
+        track("COM-002a")
 
-    # ── 3단계: 용량 검증 ──
-    print("\n── 3단계: 용량 검증 ──")
-    check_cap001()
+        # ── 2단계: 워크로드 안전성 ──
+        print("\n── 2단계: 워크로드 안전성 ──")
+        check_wls001()
+        track("WLS-001")
+        check_wls002()
+        track("WLS-002")
+        check_wls003()
+        track("WLS-003")
+        check_wls004()
+        track("WLS-004")
+        check_wls005()
+        track("WLS-005")
 
-    # ── 4단계: 인프라 검증 ──
-    print("\n── 4단계: 인프라 검증 ──")
-    check_inf002(args.target_version)
+        # ── 3단계: 용량 검증 ──
+        print("\n── 3단계: 용량 검증 ──")
+        check_cap001()
+        track("CAP-001")
+
+        # ── 4단계: 인프라 검증 ──
+        print("\n── 4단계: 인프라 검증 ──")
+        check_inf002(args.target_version)
+        track("INF-002")
 
     # ── Gate 판정 ──
     print()

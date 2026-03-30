@@ -8,17 +8,17 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 
 > **Disclaimer**: 본 스킬은 Kubernetes 업그레이드 의사결정을 보조하는 AI Agent용 도구입니다. 사전 검증, 실행 계획 수립, 모니터링 등을 자동화하지만, 실제 인프라 변경에 대한 최종 책임은 실행자(사용자)에게 있습니다. 프로덕션 환경에서는 반드시 변경 내용을 검토한 후 진행하세요.
 
-> **⚠️ 프로덕션 사용 주의**: 현재 Phase 0 Gate 판단의 일부는 LLM 해석에 의존합니다. 결정론적 검증 스크립트(`scripts/gate_check.py`)가 핵심 규칙 8개를 독립적으로 판단하지만, 나머지 8개 규칙은 LLM이 실행·해석합니다. **Staging/개발 클러스터에서 충분히 검증한 후 프로덕션에 적용하세요.** 프로덕션에서는 `gate_check.py`의 감사 로그(`audit.log`)를 반드시 확인하고, LLM 보조 검증 결과를 수동으로 교차 검증하는 것을 권장합니다.
+> **⚠️ 프로덕션 사용 주의**: 현재 Phase 0 Gate 판단의 일부는 LLM 해석에 의존합니다. 결정론적 검증 스크립트(`scripts/gate_check.py`)가 핵심 규칙 10개를 독립적으로 판단하지만, 나머지 6개 규칙은 LLM이 실행·해석합니다. **Staging/개발 클러스터에서 충분히 검증한 후 프로덕션에 적용하세요.** 프로덕션에서는 `gate_check.py`의 감사 로그(`audit.log`)를 반드시 확인하고, LLM 보조 검증 결과를 수동으로 교차 검증하는 것을 권장합니다.
 
 ## 기능
 
 - Kubernetes Control Plane / Data Plane 업그레이드 반자동 수행 (마이너 버전 +1)
   - "반자동" = Agent가 실행하되, CRITICAL/HIGH 검증 실패 시 즉시 중단하고 사용자 판단을 대기
 - 16개 사전 검증 규칙으로 업그레이드 전 위험 요소 감지 후 사용자에게 보고
-  - **결정론적 검증 (8개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
-    - 클러스터 상태, 버전 호환성, PDB 차단, 단일 레플리카, PV AZ, 노드 용량, AMI 가용성
-  - **LLM 보조 검증 (8개)**: 결정론적 검증 통과 후에만 실행
-    - Add-on 호환성, 로컬 스토리지, Job, 토폴로지, 리소스 압박, Surge 용량, Terraform drift/Recreate, Karpenter
+  - **결정론적 검증 (10개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
+    - 클러스터 상태, 버전 호환성, kubelet skew, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 노드 용량, AMI 가용성
+  - **LLM 보조 검증 (6개)**: 결정론적 검증 통과 후에만 실행
+    - Add-on 호환성, 토폴로지, 리소스 압박, Surge 용량, Terraform drift/Recreate, Karpenter
 - 감사 로그(`audit.log`): 스크립트가 기록 주체, LLM은 읽기만 — 추적성 + Gate 신뢰성 확보
 - Phase-gated 실행: 각 단계 Gate 미통과 시 즉시 중단 및 사용자 보고
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
@@ -63,6 +63,8 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 | On-Premises | Kubespray | Ansible-playbook | 📋 계획됨 |
 
 ## Quick Start
+
+전제조건: `python3` (3.9+), `kubectl`, `aws` CLI가 PATH에 있어야 합니다.
 
 ```bash
 # 1. 스킬을 설치
@@ -123,7 +125,7 @@ notes: ""                 # 특이사항
 python3 scripts/validate_recipe.py recipe.yaml
 ```
 
-> `recipe.md`(마크다운 내 YAML 블록)도 하위 호환으로 지원됩니다. 단, 새 프로젝트에서는 `recipe.yaml`을 권장합니다.
+> `recipe.md`(마크다운 내 YAML 블록)도 하위 호환으로 지원됩니다. **Deprecated**: v2에서 제거 예정이므로 새 프로젝트에서는 `recipe.yaml`을 사용하세요.
 > target_version은 current_version 대비 마이너 버전 +1만 허용됩니다. (예: "1.34" → "1.35" ✅, "1.34" → "1.36" ❌)
 
 흔한 실수와 에러 메시지:
@@ -183,12 +185,12 @@ graph TD
 
 | 검증 주체 | 카테고리 | 규칙 수 | 핵심 검증 내용 |
 |-----------|----------|---------|---------------|
-| 🔧 스크립트 | common | 2개 | 클러스터 상태, 버전 호환성 |
-| 🔧 스크립트 | workload-safety | 3개 | PDB 차단, 단일 레플리카, PV AZ 고정 |
+| 🔧 스크립트 | common | 3개 | 클러스터 상태, 버전 호환성, kubelet skew |
+| 🔧 스크립트 | workload-safety | 5개 | PDB 차단, 단일 레플리카, PV AZ 고정, 로컬 스토리지, 장시간 Job |
 | 🔧 스크립트 | capacity | 1개 | 노드 용량 여유분 |
 | 🔧 스크립트 | infrastructure | 1개 | AMI 가용성 |
 | 🤖 LLM | common | 1개 | Add-on 호환성 |
-| 🤖 LLM | workload-safety | 3개 | 로컬 스토리지, Job, 토폴로지 |
+| 🤖 LLM | workload-safety | 1개 | 토폴로지 제약 |
 | 🤖 LLM | capacity | 2개 | 리소스 압박, Surge 용량 |
 | 🤖 LLM | infrastructure | 3개 | Terraform drift, Karpenter 호환성, Recreate 감지 |
 
