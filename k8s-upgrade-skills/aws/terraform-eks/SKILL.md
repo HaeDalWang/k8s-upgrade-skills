@@ -18,9 +18,17 @@ If an MCP call fails, fall back to the equivalent AWS CLI / kubectl command show
 
 ---
 
-## Prerequisites (from recipe.md)
+## Prerequisites (from recipe.yaml)
 
-Read these values from `recipe.md`. If any is empty, do NOT start the upgrade.
+Read these values from `recipe.yaml` (or `recipe.md` fallback). If any is empty, do NOT start the upgrade.
+
+**검증**: 파싱 전에 반드시 스키마 검증을 실행한다.
+
+```bash
+python3 scripts/validate_recipe.py recipe.yaml
+```
+
+검증 실패(exit code 1) 시 에러 메시지를 사용자에게 보고하고 진행하지 않는다.
 
 | Variable | Recipe Field | Purpose |
 |---|---|---|
@@ -56,9 +64,57 @@ Report format and abort conditions: see [reference.md](reference.md).
 ## Phase 0: Pre-flight Validation (규칙 기반)
 
 **Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
-모든 검증 규칙은 [rules/](rules/) 디렉토리에 독립 파일로 정의되어 있다.
 
-**실행 방법**: [rules/rule-index.md](rules/rule-index.md)의 순서대로 16개 규칙을 실행한다.
+### Phase 0-A: 결정론적 검증 (gate_check.py) — 필수 선행
+
+**LLM이 아닌 스크립트가 Gate를 판단한다.** 아래 스크립트를 먼저 실행하고, exit code로 진행 여부를 결정한다.
+
+```bash
+# 프로젝트 루트의 scripts/ 디렉토리에서 실행
+# 스크립트가 없으면 install.sh로 설치된 경로에서 찾는다
+python3 scripts/gate_check.py \
+  --cluster-name "${CLUSTER_NAME}" \
+  --current-version "${CURRENT_VERSION}" \
+  --target-version "${TARGET_VERSION}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석 (LLM이 변경할 수 없음)**:
+
+| Exit Code | 의미 | LLM 행동 |
+|-----------|------|----------|
+| `0` | Gate OPEN — 결정론적 검증 통과 | Phase 0-B 진행 |
+| `1` | Gate BLOCKED — CRITICAL 실패 존재 | **즉시 중단**. audit.log 내용을 사용자에게 보고. Phase 1 진행 금지 |
+| `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 0-B 진행 |
+
+**스크립트가 검증하는 규칙 (8개)**:
+- COM-001: 클러스터 기본 상태 (노드 Ready, 리소스 압박)
+- COM-002: 버전 호환성 (minor +1 제약, kubelet skew)
+- WLS-001: PDB 차단 가능성 (disruptionsAllowed == 0)
+- WLS-002: 단일 레플리카 위험 (replicas == 1 카운트)
+- WLS-003: PV 존 어피니티 (AZ별 노드 수 교차 분석)
+- CAP-001: 노드 용량 여유분 (CPU/MEM 사용률)
+- INF-002: AMI 가용성 (SSM Parameter Store 조회)
+
+**감사 로그 (audit.log)**: 스크립트가 기록 주체. LLM은 읽기만 한다.
+
+### Phase 0-B: LLM 보조 검증 (gate_check.py 통과 후에만 실행)
+
+gate_check.py가 exit code 0 또는 사용자 승인(exit code 2)을 받은 후에만 실행한다.
+나머지 규칙은 LLM 해석이 필요하므로 [rules/rule-index.md](rules/rule-index.md)를 참조하여 실행한다.
+
+**LLM이 실행하는 규칙 (8개)**:
+- COM-003: Add-on 호환성 (AWS API + 해석)
+- WLS-004: 로컬 스토리지 Pod (컨텍스트 의존적)
+- WLS-005: 장시간 Job/CronJob (조건부)
+- WLS-006: 토폴로지 제약 위반 (복합 분석)
+- CAP-002: 리소스 압박 Pod (상태 분류)
+- CAP-003: Surge 용량 (서브넷/EC2 한도)
+- INF-001: Terraform 상태 드리프트 (plan 해석)
+- INF-003: Karpenter 호환성 (조건부)
+- INF-004: Terraform Recreate 감지 (plan 해석)
+
+> **중요**: LLM 보조 검증에서 CRITICAL 실패가 발견되면 즉시 중단한다. 단, 이 판단은 LLM이 하므로 audit.log에 결과를 추가 기록하고 사용자에게 보고한다.
 
 ### 규칙 카테고리 및 실행 순서
 
