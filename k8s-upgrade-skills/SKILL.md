@@ -14,9 +14,21 @@ It reads user requirements from `recipe.md`, validates them, and routes to exact
 
 ---
 
-## Step 1: Read and Validate recipe.md
+## Step 1: Read and Validate recipe.yaml (or recipe.md)
 
-Find `recipe.md` in the project root or current working directory. Parse the YAML block within the file.
+Find `recipe.yaml` in the project root or current working directory. If not found, fall back to `recipe.md` (YAML block inside markdown).
+
+**검증**: 파싱 전에 반드시 스키마 검증을 실행한다.
+
+```bash
+python3 scripts/validate_recipe.py recipe.yaml
+# 또는
+python3 scripts/validate_recipe.py recipe.md
+```
+
+검증 실패(exit code 1) 시 에러 메시지를 사용자에게 보고하고 진행하지 않는다.
+
+Parse the YAML content (from `.yaml` file directly, or from the code block inside `.md`).
 
 ### 1-1. Required Fields
 
