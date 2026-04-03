@@ -65,9 +65,9 @@ Report format and abort conditions: see [reference.md](reference.md).
 
 **Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
 
-### Phase 0-A: 결정론적 검증 (gate_check.py) — 필수 선행
+### 결정론적 검증 (gate_check.py) — 16개 규칙 전체
 
-**LLM이 아닌 스크립트가 Gate를 판단한다.** 아래 스크립트를 먼저 실행하고, exit code로 진행 여부를 결정한다.
+**스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
 
 ```bash
 # 프로젝트 루트의 scripts/ 디렉토리에서 실행
@@ -76,46 +76,38 @@ python3 scripts/gate_check.py \
   --cluster-name "${CLUSTER_NAME}" \
   --current-version "${CURRENT_VERSION}" \
   --target-version "${TARGET_VERSION}" \
+  --tf-dir "${TF_DIR}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석 (LLM이 변경할 수 없음)**:
+**Exit code 해석**:
 
-| Exit Code | 의미 | LLM 행동 |
-|-----------|------|----------|
-| `0` | Gate OPEN — 결정론적 검증 통과 | Phase 0-B 진행 |
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | Gate OPEN — 검증 통과 | Phase 1 진행 |
 | `1` | Gate BLOCKED — CRITICAL 실패 존재 | **즉시 중단**. audit.log 내용을 사용자에게 보고. Phase 1 진행 금지 |
-| `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 0-B 진행 |
+| `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 1 진행 |
 
-**스크립트가 검증하는 규칙 (10개)**:
+**스크립트가 검증하는 규칙 (16개)**:
 - COM-001: 클러스터 기본 상태 (노드 Ready, 리소스 압박)
 - COM-002: 버전 호환성 (minor +1 제약)
 - COM-002a: kubelet 버전 skew
+- COM-003: Add-on 호환성 (상태 + TARGET_VERSION 호환 버전)
 - WLS-001: PDB 차단 가능성 (disruptionsAllowed == 0)
 - WLS-002: 단일 레플리카 위험 (replicas == 1 카운트)
 - WLS-003: PV 존 어피니티 (AZ별 노드 수 교차 분석)
 - WLS-004: 로컬 스토리지 Pod (hostPath 감지)
 - WLS-005: 장시간 Job (running time > 30분, restartPolicy=Never)
+- WLS-006: 토폴로지 제약 위반 (TSC DoNotSchedule, Required Affinity)
 - CAP-001: 노드 용량 여유분 (CPU/MEM 사용률)
+- CAP-002: 리소스 압박 Pod (OOMKilled, CrashLoop, ImagePull, Evicted)
+- CAP-003: Surge 용량 (서브넷 가용 IP)
+- INF-001: Terraform 상태 드리프트 (--tf-dir 제공 시)
 - INF-002: AMI 가용성 (SSM Parameter Store 조회)
+- INF-003: Karpenter 호환성 (CRD 존재 시)
+- INF-004: Terraform Recreate 감지 (--tf-dir 제공 시)
 
 **감사 로그 (audit.log)**: 스크립트가 기록 주체. LLM은 읽기만 한다.
-
-### Phase 0-B: LLM 보조 검증 (gate_check.py 통과 후에만 실행)
-
-gate_check.py가 exit code 0 또는 사용자 승인(exit code 2)을 받은 후에만 실행한다.
-나머지 규칙은 LLM 해석이 필요하므로 [rules/rule-index.md](rules/rule-index.md)를 참조하여 실행한다.
-
-**LLM이 실행하는 규칙 (6개)**:
-- COM-003: Add-on 호환성 (AWS API + 해석)
-- WLS-006: 토폴로지 제약 위반 (복합 분석)
-- CAP-002: 리소스 압박 Pod (상태 분류)
-- CAP-003: Surge 용량 (서브넷/EC2 한도)
-- INF-001: Terraform 상태 드리프트 (plan 해석)
-- INF-003: Karpenter 호환성 (조건부)
-- INF-004: Terraform Recreate 감지 (plan 해석)
-
-> **중요**: LLM 보조 검증에서 CRITICAL 실패가 발견되면 즉시 중단한다. 단, 이 판단은 LLM이 하므로 audit.log에 결과를 추가 기록하고 사용자에게 보고한다.
 
 ### 규칙 카테고리 및 실행 순서
 
