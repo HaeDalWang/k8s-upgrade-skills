@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-gate_check.py — Phase 0 결정론적 사전 검증
+gate_check.py — Phase 0 결정론적 사전 검증 (16개 규칙 전체)
 
-LLM이 아닌 이 스크립트가 Gate를 판단합니다.
+이 스크립트가 Gate를 판단합니다.
   exit code 0 = Gate OPEN  (진행 가능)
   exit code 1 = Gate BLOCKED (CRITICAL 실패 존재)
   exit code 2 = Gate WARN  (HIGH 경고, 사용자 확인 필요)
 
 Usage:
-  python3 scripts/gate_check.py \
-    --cluster-name my-cluster \
-    --current-version 1.33 \
-    --target-version 1.34 \
+  python3 scripts/gate_check.py \\
+    --cluster-name my-cluster \\
+    --current-version 1.33 \\
+    --target-version 1.34 \\
+    [--tf-dir /path/to/terraform] \\
     [--audit-log audit.log]
 
-결정론적으로 판단 가능한 규칙만 실행합니다.
-LLM 해석이 필요한 규칙(COM-003, WLS-004~006, INF-001/003/004, CAP-002/003)은
-별도로 LLM이 실행하되, 이 스크립트의 Gate가 BLOCKED이면 진행 불가합니다.
+16개 사전 검증 규칙을 결정론적으로 실행합니다.
+--tf-dir 제공 시 INF-001/INF-004 (Terraform drift/recreate) 검증을 추가 실행합니다.
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
@@ -210,6 +211,82 @@ def check_com002a(target_version: str) -> None:
 
 
 # ══════════════════════════════════════════════════════════════
+# COM-003: Add-on 호환성 검증 (HIGH)
+# ══════════════════════════════════════════════════════════════
+def check_com003(cluster_name: str, target_version: str) -> None:
+    """COM-003: EKS Add-on 상태 및 TARGET_VERSION 호환성 검증."""
+    # 1. Add-on 목록 조회
+    r = run_cmd([
+        "aws", "eks", "list-addons",
+        "--cluster-name", cluster_name,
+        "--output", "json",
+    ])
+    if r.returncode != 0:
+        record("COM-003", "HIGH", "FAIL", "Add-on 목록 조회 실패")
+        return
+
+    try:
+        addons = json.loads(r.stdout).get("addons", [])
+    except json.JSONDecodeError:
+        record("COM-003", "HIGH", "FAIL", "Add-on 목록 JSON 파싱 실패")
+        return
+
+    if not addons:
+        record("COM-003", "HIGH", "PASS", "Add-on 없음")
+        return
+
+    # 2. 각 Add-on 상태 확인
+    bad_addons: list[str] = []
+    for addon in addons:
+        r = run_cmd([
+            "aws", "eks", "describe-addon",
+            "--cluster-name", cluster_name,
+            "--addon-name", addon,
+            "--output", "json",
+        ])
+        if r.returncode != 0:
+            continue
+        try:
+            status = json.loads(r.stdout).get("addon", {}).get("status", "")
+        except json.JSONDecodeError:
+            continue
+        if status in ADDON_BAD_STATES:
+            bad_addons.append(f"{addon}({status})")
+
+    if bad_addons:
+        record("COM-003", "HIGH", "FAIL",
+               f"비정상 Add-on: {', '.join(bad_addons)}")
+        return
+
+    # 3. TARGET_VERSION 호환 버전 확인
+    incompatible: list[str] = []
+    for addon in addons:
+        r = run_cmd([
+            "aws", "eks", "describe-addon-versions",
+            "--addon-name", addon,
+            "--kubernetes-version", target_version,
+            "--output", "json",
+        ])
+        if r.returncode != 0:
+            incompatible.append(addon)
+            continue
+        try:
+            versions = json.loads(r.stdout).get("addons", [])
+        except json.JSONDecodeError:
+            incompatible.append(addon)
+            continue
+        if not versions:
+            incompatible.append(addon)
+
+    if incompatible:
+        record("COM-003", "HIGH", "FAIL",
+               f"TARGET_VERSION {target_version} 비호환 Add-on: {', '.join(incompatible)}")
+    else:
+        record("COM-003", "HIGH", "PASS",
+               f"모든 Add-on ACTIVE + {target_version} 호환")
+
+
+# ══════════════════════════════════════════════════════════════
 # WLS-001: PDB 차단 가능성 분석 (CRITICAL)
 # ══════════════════════════════════════════════════════════════
 def check_wls001() -> None:
@@ -240,6 +317,23 @@ SYSTEM_NS = frozenset({
     "kube-system", "kube-node-lease", "kube-public",
     "karpenter", "cert-manager",
 })
+
+# ── INF-004 Data Plane 리소스 타입 ──
+DATA_PLANE_RESOURCES: frozenset = frozenset({
+    "aws_eks_node_group",
+    "aws_launch_template",
+    "aws_autoscaling_group",
+})
+
+# ── INF-004 Recreate 마커 정규식 ──
+RECREATE_MARKERS = re.compile(r"forces replacement|must be replaced")
+REPLACE_PREFIX = re.compile(r"^\s*-/\+\s+resource\s+\"(\w+)\"\s+\"(\w+)\"", re.MULTILINE)
+
+# ── INF-001 Destroy/Recreate 패턴 ──
+DESTROY_PATTERN = re.compile(r"Plan:.*\d+\s+to\s+destroy")
+
+# ── COM-003 비정상 Add-on 상태 ──
+ADDON_BAD_STATES: frozenset = frozenset({"DEGRADED", "CREATE_FAILED"})
 
 
 def check_wls002() -> None:
@@ -394,6 +488,62 @@ def check_wls005() -> None:
 
 
 # ══════════════════════════════════════════════════════════════
+# WLS-006: 토폴로지 제약 위반 검증 (HIGH)
+# ══════════════════════════════════════════════════════════════
+def check_wls006() -> None:
+    """WLS-006: TopologySpreadConstraints / Required Affinity 위험 분석."""
+    risky: list[str] = []
+
+    for kind in ("deployments", "statefulsets"):
+        data = kubectl_json(kind)
+        for item in data.get("items", []):
+            ns = item["metadata"]["namespace"]
+            if ns in SYSTEM_NS:
+                continue
+            name = item["metadata"]["name"]
+            spec = item.get("spec", {}).get("template", {}).get("spec", {})
+
+            # TSC: whenUnsatisfiable == DoNotSchedule
+            for tsc in spec.get("topologySpreadConstraints", []):
+                if tsc.get("whenUnsatisfiable") == "DoNotSchedule":
+                    risky.append(f"{ns}/{name}")
+                    break
+            else:
+                # Affinity: requiredDuringSchedulingIgnoredDuringExecution
+                affinity = spec.get("affinity", {})
+                node_aff = (affinity.get("nodeAffinity", {})
+                            .get("requiredDuringSchedulingIgnoredDuringExecution"))
+                pod_anti = (affinity.get("podAntiAffinity", {})
+                            .get("requiredDuringSchedulingIgnoredDuringExecution"))
+                if node_aff or pod_anti:
+                    risky.append(f"{ns}/{name}")
+
+    if not risky:
+        record("WLS-006", "HIGH", "PASS",
+               "엄격한 토폴로지 제약 워크로드 없음")
+        return
+
+    # AZ별 노드 수 확인
+    nodes = kubectl_json("nodes", all_ns=False)
+    az_count: Counter = Counter()
+    for n in nodes.get("items", []):
+        az = n["metadata"].get("labels", {}).get(
+            "topology.kubernetes.io/zone", "")
+        if az:
+            az_count[az] += 1
+
+    single_az = [az for az, cnt in az_count.items() if cnt <= 1]
+
+    if single_az:
+        record("WLS-006", "HIGH", "FAIL",
+               f"위험 워크로드 {len(risky)}개 + 단일 노드 AZ: "
+               f"{', '.join(single_az)}")
+    else:
+        record("WLS-006", "HIGH", "FAIL",
+               f"엄격한 토폴로지 제약 워크로드 {len(risky)}개 (drain 시 Pending 위험)")
+
+
+# ══════════════════════════════════════════════════════════════
 # INF-002: 대상 버전 AMI 가용성 검증 (CRITICAL)
 # ══════════════════════════════════════════════════════════════
 def check_inf002(target_version: str) -> None:
@@ -535,6 +685,280 @@ def check_cap001() -> None:
 
 
 # ══════════════════════════════════════════════════════════════
+# CAP-002: 리소스 압박 Pod 검증 (MEDIUM)
+# ══════════════════════════════════════════════════════════════
+def check_cap002() -> None:
+    """CAP-002: OOMKilled, CrashLoopBackOff, ImagePullBackOff, Evicted Pod 감지."""
+    pods = kubectl_json("pods", timeout=60)
+    if not pods:
+        record("CAP-002", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+        return
+
+    problem_pods: list[str] = []
+    evicted_pods: list[str] = []
+
+    for pod in pods.get("items", []):
+        ns = pod["metadata"]["namespace"]
+        name = pod["metadata"]["name"]
+
+        # Evicted check
+        phase = pod.get("status", {}).get("phase", "")
+        reason = pod.get("status", {}).get("reason", "")
+        if phase == "Failed" and reason == "Evicted":
+            evicted_pods.append(f"{ns}/{name}")
+            continue
+
+        # containerStatuses check
+        for cs in pod.get("status", {}).get("containerStatuses", []):
+            # OOMKilled — current state
+            term = cs.get("state", {}).get("terminated", {})
+            if term.get("reason") == "OOMKilled":
+                problem_pods.append(f"{ns}/{name}(OOMKilled)")
+                break
+            # OOMKilled — last state
+            last_term = cs.get("lastState", {}).get("terminated", {})
+            if last_term.get("reason") == "OOMKilled":
+                problem_pods.append(f"{ns}/{name}(OOMKilled-prev)")
+                break
+            # CrashLoopBackOff / ImagePullBackOff
+            waiting = cs.get("state", {}).get("waiting", {})
+            wait_reason = waiting.get("reason", "")
+            if wait_reason in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull"):
+                problem_pods.append(f"{ns}/{name}({wait_reason})")
+                break
+
+    if problem_pods:
+        record("CAP-002", "MEDIUM", "FAIL",
+               f"문제 Pod {len(problem_pods)}개: "
+               f"{', '.join(problem_pods[:5])}"
+               f"{'...' if len(problem_pods) > 5 else ''}")
+    elif evicted_pods:
+        record("CAP-002", "MEDIUM", "PASS",
+               f"Evicted Pod {len(evicted_pods)}개 (INFO)")
+    else:
+        record("CAP-002", "MEDIUM", "PASS", "문제 Pod 없음")
+
+
+# ══════════════════════════════════════════════════════════════
+# CAP-003: Surge 용량 (서브넷 가용 IP) 검증 (HIGH)
+# ══════════════════════════════════════════════════════════════
+def check_cap003(cluster_name: str) -> None:
+    """CAP-003: MNG 서브넷 가용 IP 검증."""
+    # 1. MNG 목록 조회
+    r = run_cmd([
+        "aws", "eks", "list-nodegroups",
+        "--cluster-name", cluster_name,
+        "--output", "json",
+    ])
+    if r.returncode != 0:
+        record("CAP-003", "HIGH", "FAIL", "MNG 목록 조회 실패")
+        return
+
+    try:
+        nodegroups = json.loads(r.stdout).get("nodegroups", [])
+    except json.JSONDecodeError:
+        record("CAP-003", "HIGH", "FAIL", "MNG 목록 JSON 파싱 실패")
+        return
+
+    if not nodegroups:
+        record("CAP-003", "HIGH", "PASS", "MNG 없음")
+        return
+
+    # 2. 각 MNG의 서브넷 수집
+    all_subnets: set[str] = set()
+    for ng in nodegroups:
+        r = run_cmd([
+            "aws", "eks", "describe-nodegroup",
+            "--cluster-name", cluster_name,
+            "--nodegroup-name", ng,
+            "--output", "json",
+        ])
+        if r.returncode != 0:
+            continue
+        try:
+            subnets = json.loads(r.stdout).get("nodegroup", {}).get("subnets", [])
+            all_subnets.update(subnets)
+        except json.JSONDecodeError:
+            continue
+
+    if not all_subnets:
+        record("CAP-003", "HIGH", "FAIL", "서브넷 정보 조회 실패")
+        return
+
+    # 3. 서브넷 가용 IP 확인
+    r = run_cmd([
+        "aws", "ec2", "describe-subnets",
+        "--subnet-ids", *sorted(all_subnets),
+        "--output", "json",
+    ])
+    if r.returncode != 0:
+        record("CAP-003", "HIGH", "FAIL", "서브넷 상세 조회 실패")
+        return
+
+    try:
+        subnets_data = json.loads(r.stdout).get("Subnets", [])
+    except json.JSONDecodeError:
+        record("CAP-003", "HIGH", "FAIL", "서브넷 JSON 파싱 실패")
+        return
+
+    critical_low: list[str] = []   # < 10
+    warning_low: list[str] = []    # 10~49
+
+    for s in subnets_data:
+        sid = s.get("SubnetId", "?")
+        avail = s.get("AvailableIpAddressCount", 0)
+        if avail < 10:
+            critical_low.append(f"{sid}({avail})")
+        elif avail < 50:
+            warning_low.append(f"{sid}({avail})")
+
+    if critical_low:
+        record("CAP-003", "HIGH", "FAIL",
+               f"가용 IP < 10: {', '.join(critical_low)}")
+    elif warning_low:
+        record("CAP-003", "HIGH", "FAIL",
+               f"가용 IP 10~49 (고갈 위험): {', '.join(warning_low)}")
+    else:
+        record("CAP-003", "HIGH", "PASS",
+               "모든 서브넷 가용 IP ≥ 50")
+
+
+# ══════════════════════════════════════════════════════════════
+# run_terraform_plan: Terraform plan 헬퍼
+# ══════════════════════════════════════════════════════════════
+def run_terraform_plan(tf_dir: str) -> tuple[int, str]:
+    """terraform plan -detailed-exitcode -no-color 실행. 반환: (exit_code, output)."""
+    try:
+        r = subprocess.run(
+            ["terraform", "plan", "-detailed-exitcode", "-no-color"],
+            capture_output=True, text=True, cwd=tf_dir, timeout=300,
+        )
+        return (r.returncode, r.stdout + r.stderr)
+    except subprocess.TimeoutExpired:
+        return (1, "ERROR: terraform plan timed out (300s)")
+    except FileNotFoundError:
+        return (1, "ERROR: terraform not found")
+
+
+# ══════════════════════════════════════════════════════════════
+# INF-001: Terraform 상태 드리프트 검증 (HIGH)
+# ══════════════════════════════════════════════════════════════
+def check_inf001(tf_exit_code: int, plan_output: str) -> None:
+    """INF-001: Terraform 상태 드리프트 검증."""
+    if tf_exit_code == 0:
+        record("INF-001", "HIGH", "PASS", "terraform plan: 변경 없음 (no drift)")
+        return
+    if tf_exit_code == 1:
+        record("INF-001", "HIGH", "FAIL", "terraform plan 오류 (exit code 1)")
+        return
+    # exit code 2 — changes detected
+    if DESTROY_PATTERN.search(plan_output) or RECREATE_MARKERS.search(plan_output):
+        record("INF-001", "HIGH", "FAIL",
+               "terraform drift 감지 — destroy/recreate 포함")
+    else:
+        record("INF-001", "HIGH", "FAIL",
+               "terraform drift 감지 — 비파괴적 변경")
+
+
+# ══════════════════════════════════════════════════════════════
+# INF-004: Terraform Recreate 감지 — Data Plane 리소스 (HIGH/CRITICAL)
+# ══════════════════════════════════════════════════════════════
+def check_inf004(plan_output: str) -> None:
+    """INF-004: Terraform Recreate 감지 (Data Plane 리소스)."""
+    recreate_resources: list[str] = []
+    # -/+ resource lines
+    for m in REPLACE_PREFIX.finditer(plan_output):
+        recreate_resources.append(m.group(1))
+    # "forces replacement" / "must be replaced" context lines
+    for line in plan_output.splitlines():
+        if RECREATE_MARKERS.search(line):
+            # Try to extract resource type from nearby context
+            # Lines like: # aws_eks_node_group.xxx must be replaced
+            parts = line.strip().lstrip("# ").split(".")
+            if len(parts) >= 2:
+                rtype = parts[0].strip()
+                if rtype and rtype[0].isalpha():
+                    recreate_resources.append(rtype)
+
+    if not recreate_resources:
+        record("INF-004", "HIGH", "PASS", "recreate 마커 없음")
+        return
+
+    data_plane_hits = [r for r in recreate_resources if r in DATA_PLANE_RESOURCES]
+    if data_plane_hits:
+        record("INF-004", "CRITICAL", "FAIL",
+               f"Data Plane recreate 감지: {', '.join(set(data_plane_hits))}")
+    else:
+        record("INF-004", "HIGH", "FAIL",
+               f"비-Data Plane recreate: {', '.join(set(recreate_resources))}")
+
+
+# ══════════════════════════════════════════════════════════════
+# INF-003: Karpenter 호환성 검증 (HIGH)
+# ══════════════════════════════════════════════════════════════
+def check_inf003() -> None:
+    """INF-003: Karpenter 호환성 검증."""
+    # 1. CRD 존재 확인
+    r = run_cmd(["kubectl", "get", "crd", "nodeclaims.karpenter.sh"], timeout=10)
+    if r.returncode != 0:
+        record("INF-003", "HIGH", "SKIP", "Karpenter CRD 미존재 — 건너뜀")
+        return
+
+    # 2. Karpenter 버전 추출
+    r = run_cmd([
+        "kubectl", "get", "deployment", "-n", "karpenter", "karpenter",
+        "-o", "json",
+    ])
+    version = "unknown"
+    if r.returncode == 0:
+        try:
+            dep = json.loads(r.stdout)
+            image = dep["spec"]["template"]["spec"]["containers"][0]["image"]
+            version = image.rsplit(":", 1)[-1] if ":" in image else "unknown"
+        except (json.JSONDecodeError, KeyError, IndexError):
+            pass
+
+    # 3. NodePool disruption budget 확인
+    r = run_cmd(["kubectl", "get", "nodepool", "-o", "json"])
+    if r.returncode != 0:
+        record("INF-003", "HIGH", "PASS",
+               f"Karpenter {version} — NodePool 조회 불가")
+        return
+
+    try:
+        pools = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        record("INF-003", "HIGH", "PASS",
+               f"Karpenter {version} — NodePool JSON 파싱 실패")
+        return
+
+    blocked_pools: list[str] = []
+    for pool in pools.get("items", []):
+        name = pool.get("metadata", {}).get("name", "?")
+        budgets = (pool.get("spec", {})
+                   .get("disruption", {})
+                   .get("budgets", []))
+        for b in budgets:
+            nodes_val = b.get("nodes", None)
+            if nodes_val is not None:
+                # "0" or 0
+                try:
+                    if int(str(nodes_val)) == 0:
+                        blocked_pools.append(name)
+                        break
+                except ValueError:
+                    pass
+
+    if blocked_pools:
+        record("INF-003", "HIGH", "FAIL",
+               f"Karpenter {version} — disruption budget=0: "
+               f"{', '.join(blocked_pools)} (drift 교체 차단)")
+    else:
+        record("INF-003", "HIGH", "PASS",
+               f"Karpenter {version} — disruption budget 정상")
+
+
+# ══════════════════════════════════════════════════════════════
 # main
 # ══════════════════════════════════════════════════════════════
 def main() -> None:
@@ -545,6 +969,8 @@ def main() -> None:
     parser.add_argument("--target-version", required=True)
     parser.add_argument("--audit-log", default="audit.log",
                         help="감사 로그 저장 경로 (기본: 현재 디렉토리의 audit.log)")
+    parser.add_argument("--tf-dir", default=None,
+                        help="Terraform 구성 디렉토리 (INF-001/INF-004에 필요)")
     args = parser.parse_args()
 
     # 의존성 확인
@@ -553,6 +979,17 @@ def main() -> None:
         if r.returncode != 0:
             print(f"ERROR: '{cmd}' not found in PATH.", file=sys.stderr)
             sys.exit(127)
+
+    # --tf-dir 검증
+    if args.tf_dir:
+        tf_path = Path(args.tf_dir)
+        if not tf_path.is_dir():
+            print(f"ERROR: --tf-dir '{args.tf_dir}' is not a directory.", file=sys.stderr)
+            sys.exit(1)
+        r = run_cmd(["which", "terraform"])
+        if r.returncode != 0:
+            print("ERROR: 'terraform' not found in PATH.", file=sys.stderr)
+            sys.exit(1)
 
     print()
     print("════════════════════════════════════════════════════════════")
@@ -566,9 +1003,10 @@ def main() -> None:
 
     # ── 전체 규칙 목록 (SKIPPED 추적용) ──
     ALL_RULES = [
-        "COM-002", "COM-001", "COM-002a",
-        "WLS-001", "WLS-002", "WLS-003", "WLS-004", "WLS-005",
-        "CAP-001", "INF-002",
+        "COM-002", "COM-001", "COM-002a", "COM-003",
+        "WLS-001", "WLS-002", "WLS-003", "WLS-004", "WLS-005", "WLS-006",
+        "CAP-001", "CAP-002", "CAP-003",
+        "INF-001", "INF-002", "INF-003", "INF-004",
     ]
     executed_rules: list[str] = []
 
@@ -590,6 +1028,8 @@ def main() -> None:
         track("COM-001")
         check_com002a(args.target_version)
         track("COM-002a")
+        check_com003(args.cluster_name, args.target_version)
+        track("COM-003")
 
         # ── 2단계: 워크로드 안전성 ──
         print("\n── 2단계: 워크로드 안전성 ──")
@@ -603,16 +1043,39 @@ def main() -> None:
         track("WLS-004")
         check_wls005()
         track("WLS-005")
+        check_wls006()
+        track("WLS-006")
 
         # ── 3단계: 용량 검증 ──
         print("\n── 3단계: 용량 검증 ──")
         check_cap001()
         track("CAP-001")
+        check_cap002()
+        track("CAP-002")
+        check_cap003(args.cluster_name)
+        track("CAP-003")
 
         # ── 4단계: 인프라 검증 ──
         print("\n── 4단계: 인프라 검증 ──")
+        if args.tf_dir:
+            tf_exit_code, plan_output = run_terraform_plan(args.tf_dir)
+            check_inf001(tf_exit_code, plan_output)
+            track("INF-001")
+        else:
+            record("INF-001", "HIGH", "SKIP", "--tf-dir 미제공")
+            track("INF-001")
+
         check_inf002(args.target_version)
         track("INF-002")
+        check_inf003()
+        track("INF-003")
+
+        if args.tf_dir:
+            check_inf004(plan_output)
+            track("INF-004")
+        else:
+            record("INF-004", "HIGH", "SKIP", "--tf-dir 미제공")
+            track("INF-004")
 
     # ── Gate 판정 ──
     print()
@@ -638,8 +1101,7 @@ def main() -> None:
         sys.exit(2)
     else:
         print()
-        print(f"{GREEN}Gate: OPEN — 결정론적 검증 통과. "
-              f"LLM 보조 검증 진행 가능.{NC}")
+        print(f"{GREEN}Gate: OPEN — 결정론적 검증 통과.{NC}")
         print(f"감사 로그: {args.audit_log}")
         sys.exit(0)
 

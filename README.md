@@ -8,17 +8,13 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 
 > **Disclaimer**: 본 스킬은 Kubernetes 업그레이드 의사결정을 보조하는 AI Agent용 도구입니다. 사전 검증, 실행 계획 수립, 모니터링 등을 자동화하지만, 실제 인프라 변경에 대한 최종 책임은 실행자(사용자)에게 있습니다. 프로덕션 환경에서는 반드시 변경 내용을 검토한 후 진행하세요.
 
-> **⚠️ 프로덕션 사용 주의**: 현재 Phase 0 Gate 판단의 일부는 LLM 해석에 의존합니다. 결정론적 검증 스크립트(`scripts/gate_check.py`)가 핵심 규칙 10개를 독립적으로 판단하지만, 나머지 6개 규칙은 LLM이 실행·해석합니다. **Staging/개발 클러스터에서 충분히 검증한 후 프로덕션에 적용하세요.** 프로덕션에서는 `gate_check.py`의 감사 로그(`audit.log`)를 반드시 확인하고, LLM 보조 검증 결과를 수동으로 교차 검증하는 것을 권장합니다.
-
 ## 기능
 
 - Kubernetes Control Plane / Data Plane 업그레이드 반자동 수행 (마이너 버전 +1)
   - "반자동" = Agent가 실행하되, CRITICAL/HIGH 검증 실패 시 즉시 중단하고 사용자 판단을 대기
 - 16개 사전 검증 규칙으로 업그레이드 전 위험 요소 감지 후 사용자에게 보고
-  - **결정론적 검증 (10개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
-    - 클러스터 상태, 버전 호환성, kubelet skew, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 노드 용량, AMI 가용성
-  - **LLM 보조 검증 (6개)**: 결정론적 검증 통과 후에만 실행
-    - Add-on 호환성, 토폴로지, 리소스 압박, Surge 용량, Terraform drift/Recreate, Karpenter
+  - **결정론적 검증 (16개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
+    - 클러스터 상태, 버전 호환성, kubelet skew, Add-on 호환성, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 토폴로지 제약, 노드 용량, 리소스 압박 Pod, Surge 용량, Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지
 - 감사 로그(`audit.log`): 스크립트가 기록 주체, LLM은 읽기만 — 추적성 + Gate 신뢰성 확보
 - Phase-gated 실행: 각 단계 Gate 미통과 시 즉시 중단 및 사용자 보고
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
@@ -160,14 +156,12 @@ MCP 서버가 없어도 Agent는 AWS CLI / kubectl 등 일반적인 Command로 f
 
 ```mermaid
 graph TD
-    A[recipe.yaml 읽기 및 검증] --> B0A["Phase 0-A: 결정론적 검증 (gate_check.py)"]
-    B0A -- "exit 0: Gate OPEN" --> B0B["Phase 0-B: LLM 보조 검증 (8개 규칙)"]
-    B0A -- "exit 1: Gate BLOCKED" --> STOP[즉시 중단 — audit.log 확인 후 해결]
-    B0A -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
-    USER_CONFIRM -- "승인" --> B0B
+    A[recipe.yaml 읽기 및 검증] --> B0["Phase 0: 결정론적 검증 (gate_check.py — 16개 규칙)"]
+    B0 -- "exit 0: Gate OPEN" --> C[Phase 1: IaC 변수 업데이트]
+    B0 -- "exit 1: Gate BLOCKED" --> STOP[즉시 중단 — audit.log 확인 후 해결]
+    B0 -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
+    USER_CONFIRM -- "승인" --> C
     USER_CONFIRM -- "거부" --> STOP
-    B0B -- "Gate: CRITICAL 0개" --> C[Phase 1: IaC 변수 업데이트]
-    B0B -- "CRITICAL 실패" --> STOP
     C -- "Gate: 버전/AMI 값 반영 확인" --> D[Phase 2: Control Plane 업그레이드]
     D -- "Gate: CP status=ACTIVE, 목표 버전 도달" --> E[Phase 3: Add-on 검증]
     E -- "Gate: 모든 Add-on ACTIVE" --> F[Phase 4: Data Plane 업그레이드]
@@ -178,24 +172,19 @@ graph TD
 
     style STOP fill:#f44,color:#fff
     style J fill:#4a4,color:#fff
-    style B0A fill:#2196F3,color:#fff
+    style B0 fill:#2196F3,color:#fff
 ```
 
 ## 사전 검증 규칙 (16개)
 
 | 검증 주체 | 카테고리 | 규칙 수 | 핵심 검증 내용 |
 |-----------|----------|---------|---------------|
-| 🔧 스크립트 | common | 3개 | 클러스터 상태, 버전 호환성, kubelet skew |
-| 🔧 스크립트 | workload-safety | 5개 | PDB 차단, 단일 레플리카, PV AZ 고정, 로컬 스토리지, 장시간 Job |
-| 🔧 스크립트 | capacity | 1개 | 노드 용량 여유분 |
-| 🔧 스크립트 | infrastructure | 1개 | AMI 가용성 |
-| 🤖 LLM | common | 1개 | Add-on 호환성 |
-| 🤖 LLM | workload-safety | 1개 | 토폴로지 제약 |
-| 🤖 LLM | capacity | 2개 | 리소스 압박, Surge 용량 |
-| 🤖 LLM | infrastructure | 3개 | Terraform drift, Karpenter 호환성, Recreate 감지 |
+| 🔧 스크립트 | common | 4개 | 클러스터 상태, 버전 호환성, kubelet skew, Add-on 호환성 |
+| 🔧 스크립트 | workload-safety | 6개 | PDB 차단, 단일 레플리카, PV AZ 고정, 로컬 스토리지, 장시간 Job, 토폴로지 제약 |
+| 🔧 스크립트 | capacity | 3개 | 노드 용량 여유분, 리소스 압박 Pod, Surge 용량 |
+| 🔧 스크립트 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
 
 🔧 = `scripts/gate_check.py`가 결정론적으로 판단 (exit code 기반, LLM bypass 불가)
-🤖 = LLM이 실행·해석 (gate_check.py 통과 후에만 실행)
 
 심각도: `CRITICAL`(즉시 중단) > `HIGH`(사용자 확인) > `MEDIUM`(보고만) > `LOW`(참고)
 
