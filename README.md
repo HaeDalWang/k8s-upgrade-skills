@@ -8,13 +8,15 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 
 > **Disclaimer**: 본 스킬은 Kubernetes 업그레이드 의사결정을 보조하는 AI Agent용 도구입니다. 사전 검증, 실행 계획 수립, 모니터링 등을 자동화하지만, 실제 인프라 변경에 대한 최종 책임은 실행자(사용자)에게 있습니다. 프로덕션 환경에서는 반드시 변경 내용을 검토한 후 진행하세요.
 
+> **⚠️ 프로덕션 사용 주의**: Phase 0 사전 검증(16개 규칙)은 `scripts/gate_check.py`가 결정론적으로 판단하지만, Phase 1~7 Gate(IaC 변경 확인, Add-on 상태, 노드 Ready 판단 등)는 아직 LLM이 해석합니다. 프로덕션에서는 각 Phase 완료 후 수동 교차 검증을 권장합니다.
+
 ## 기능
 
 - Kubernetes Control Plane / Data Plane 업그레이드 반자동 수행 (마이너 버전 +1)
   - "반자동" = Agent가 실행하되, CRITICAL/HIGH 검증 실패 시 즉시 중단하고 사용자 판단을 대기
 - 16개 사전 검증 규칙으로 업그레이드 전 위험 요소 감지 후 사용자에게 보고
   - **결정론적 검증 (16개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
-    - 클러스터 상태, 버전 호환성, kubelet skew, Add-on 호환성, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 토폴로지 제약, 노드 용량, 리소스 압박 Pod, Surge 용량, Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지
+    - 클러스터 상태, 버전 호환성(+kubelet skew), Add-on 호환성, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 토폴로지 제약, 노드 용량, 리소스 압박 Pod, Surge 용량, Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지
 - 감사 로그(`audit.log`): 스크립트가 기록 주체, LLM은 읽기만 — 추적성 + Gate 신뢰성 확보
 - Phase-gated 실행: 각 단계 Gate 미통과 시 즉시 중단 및 사용자 보고
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
@@ -68,8 +70,12 @@ git clone https://github.com/HaeDalWang/k8s-upgrade-skills.git
 cd k8s-upgrade-skills
 ./install.sh
 
-# 2. 쿠버네티스를 관리하는 프로젝트 디렉토리의 recipe.yaml 작성
-# 3. AI Agent에게 요청: "클러스터를 업그레이드해줘"
+# 2. (선택) 테스트 실행
+pip install pytest hypothesis
+python3 -m pytest tests/
+
+# 3. 쿠버네티스를 관리하는 프로젝트 디렉토리의 recipe.yaml 작성
+# 4. AI Agent에게 요청: "클러스터를 업그레이드해줘"
 ```
 
 > 테스트할 Kubernetes 클러스터가 없다면? [example/terraform-eks/](example/terraform-eks/)에 EKS + Karpenter 참조 인프라와 위험 시나리오 샘플이 포함되어 있습니다. Terraform으로 바로 배포하고 스킬을 테스트해볼 수 있습니다.
@@ -198,13 +204,15 @@ graph TD
 │       ├── reference.md               #     보고서 템플릿, 중단 조건
 │       └── rules/                     #     사전 검증 규칙 시스템 (16개)
 │           ├── rule-index.md          #       규칙 색인 + 실행 순서
-│           ├── common/                #       공통 규칙 (3개)
+│           ├── common/                #       공통 규칙 (4개: COM-001, COM-002, COM-002a, COM-003)
 │           ├── workload-safety/       #       워크로드 안전성 규칙 (6개)
 │           ├── capacity/              #       용량 검증 규칙 (3개)
-│           └── infrastructure/        #       인프라 검증 규칙 (4개)
+│           └── infrastructure/        #       인프라 검증 규칙 (4개: INF-001~004)
 ├── scripts/                            # 결정론적 검증 스크립트 (P0 Gate)
-│   ├── gate_check.py                  #   Phase 0-A 독립 검증 (exit code로 Gate 제어)
+│   ├── gate_check.py                  #   Phase 0 독립 검증 (16개 규칙, exit code로 Gate 제어)
 │   └── validate_recipe.py             #   recipe.yaml 스키마 검증
+├── tests/                              # 테스트
+│   └── test_gate_check.py            #   gate_check.py 단위 테스트 (pytest)
 ├── docs/                               # 운영 문서
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차
