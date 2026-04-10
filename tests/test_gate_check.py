@@ -24,11 +24,7 @@ import gate_check
 @pytest.fixture(autouse=True)
 def reset_counters():
     """각 테스트 전 gate_check 글로벌 카운터 초기화."""
-    gate_check.critical_fail = 0
-    gate_check.high_warn = 0
-    gate_check.total_pass = 0
-    gate_check.total_rules = 0
-    gate_check.audit_lines.clear()
+    gate_check.reset_gate()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -37,7 +33,7 @@ def reset_counters():
 
 
 class TestAllRulesOrder:
-    """16개 규칙 ALL_RULES 순서 확인."""
+    """17개 규칙 ALL_RULES 순서 확인."""
 
     def test_all_rules_order(self):
         """main() 소스에 ALL_RULES 17개 항목이 올바른 순서로 정의되어 있는지 확인."""
@@ -99,7 +95,7 @@ class TestTfDirNonexistentExits1:
 
 
 class TestCom002CriticalFailSkipsRest:
-    """COM-002 CRITICAL FAIL 시 나머지 16개 규칙 SKIP 확인."""
+    """COM-002 CRITICAL FAIL 시 나머지 17개 규칙 SKIP 확인."""
 
     def test_com002_critical_fail_skips_rest(self):
         with unittest.mock.patch('sys.argv', [
@@ -250,11 +246,7 @@ class TestCom003Property:
         **Validates: Requirements 1.2, 1.3, 1.4, 1.5**
         """
         # Manual counter reset (hypothesis generates multiple inputs per test call)
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         cluster_name = "test-cluster"
         target_version = "1.34"
@@ -446,11 +438,7 @@ class TestWls006Property:
         **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         side_effect = _build_wls006_kubectl_json_side_effect(workloads, az_nodes)
 
@@ -619,11 +607,7 @@ class TestCap002Property:
         **Validates: Requirements 3.2, 3.3, 3.4, 3.5, 3.6**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         pod_items = _build_cap002_pod_items(pods)
 
@@ -644,13 +628,14 @@ class TestCap002Property:
 
         if has_problem:
             # Req 3.4: CrashLoop/ImagePull/OOMKilled → FAIL(MEDIUM)
-            # record("CAP-002", "MEDIUM", "FAIL", ...) → high_warn += 1
-            assert gate_check.high_warn == 1, (
+            # record("CAP-002", "MEDIUM", "FAIL", ...) → medium_info += 1
+            assert gate_check.medium_info == 1, (
                 f"Expected FAIL(MEDIUM) with problem pods, "
-                f"got high_warn={gate_check.high_warn}, conditions={[p['condition'] for p in pods]}"
+                f"got medium_info={gate_check.medium_info}, conditions={[p['condition'] for p in pods]}"
             )
             assert gate_check.total_pass == 0
             assert gate_check.critical_fail == 0
+            assert gate_check.high_warn == 0
             # Verify problem pod count in audit
             audit_text = " ".join(gate_check.audit_lines)
             assert str(problem_count) in audit_text, (
@@ -777,11 +762,7 @@ class TestCap003Property:
         **Validates: Requirements 4.3, 4.4, 4.5**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         cluster_name = "test-cluster"
         side_effect = _build_cap003_run_cmd_side_effect(cluster_name, nodegroups, subnets)
@@ -913,11 +894,7 @@ class TestInf001Property:
         **Validates: Requirements 5.3, 5.4, 5.5, 5.6**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         plan_output = _build_plan_output(output_type)
 
@@ -1093,11 +1070,7 @@ class TestInf003Property:
         **Validates: Requirements 6.2, 6.3, 6.5, 6.6**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         side_effect = _build_inf003_run_cmd_side_effect(crd_exists, image_tag, nodepools)
 
@@ -1225,11 +1198,7 @@ class TestInf004Property:
         **Validates: Requirements 7.3, 7.4, 7.5, 7.6**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         plan_output = _build_inf004_plan_output(recreate_entries)
 
@@ -1340,15 +1309,16 @@ class TestGateExitCodeProperty:
         gate_check.total_pass = 0
         gate_check.total_rules = 0
         gate_check.audit_lines.clear()
+        gate_check._sync_to_gate()
 
         expected = _expected_exit_code(critical_fail, high_warn)
 
         # Execute the gate decision block by mimicking the logic from main()
         # We capture sys.exit() via SystemExit exception
         with pytest.raises(SystemExit) as exc_info:
-            if gate_check.critical_fail > 0:
+            if gate_check._gate.critical_fail > 0:
                 sys.exit(1)
-            elif gate_check.high_warn > 0:
+            elif gate_check._gate.high_warn > 0:
                 sys.exit(2)
             else:
                 sys.exit(0)
@@ -1443,11 +1413,7 @@ class TestCliFailureGracefulProperty:
         **Validates: Requirements 12.4**
         """
         # Reset counters
-        gate_check.critical_fail = 0
-        gate_check.high_warn = 0
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
+        gate_check.reset_gate()
 
         # Select a check function based on fn_choice
         all_fns = [
