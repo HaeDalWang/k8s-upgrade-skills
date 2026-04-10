@@ -48,23 +48,37 @@ def parse_simple_yaml(text: str) -> dict:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # key: value 형태만 처리
-        match = re.match(r'^([a-z_]+)\s*:\s*(.+)$', line)
+
+        # key: value 형태만 처리 (빈 값도 허용)
+        match = re.match(r'^([a-z_]+)\s*:\s*(.*)$', line)
         if match:
             key = match.group(1)
             value = match.group(2).strip()
-            # 인라인 주석 제거
-            comment_idx = value.find("#")
-            if comment_idx > 0:
-                # 따옴표 안의 #은 무시
-                in_quote = False
-                for i, ch in enumerate(value):
-                    if ch in ('"', "'"):
-                        in_quote = not in_quote
-                    elif ch == '#' and not in_quote:
-                        value = value[:i].strip()
-                        break
-            # 따옴표 제거
+
+            # 빈 값은 빈 문자열로 저장
+            if not value:
+                result[key] = ""
+                continue
+
+            # 따옴표로 감싸진 값은 그대로 추출 (내부 #, : 무시)
+            if (value.startswith('"') and value.endswith('"')) or \
+               (value.startswith("'") and value.endswith("'")):
+                result[key] = value[1:-1]
+                continue
+
+            # 인라인 주석 제거 (따옴표 밖의 # 만)
+            in_single = False
+            in_double = False
+            for i, ch in enumerate(value):
+                if ch == '"' and not in_single:
+                    in_double = not in_double
+                elif ch == "'" and not in_double:
+                    in_single = not in_single
+                elif ch == '#' and not in_single and not in_double:
+                    value = value[:i].strip()
+                    break
+
+            # 따옴표 제거 (주석 제거 후 다시 확인)
             if (value.startswith('"') and value.endswith('"')) or \
                (value.startswith("'") and value.endswith("'")):
                 value = value[1:-1]
@@ -86,6 +100,11 @@ def load_recipe(path: str) -> dict:
     """recipe.yaml 또는 recipe.md를 로드하여 dict 반환."""
     content = Path(path).read_text(encoding="utf-8")
     if path.endswith(".md"):
+        print(
+            "⚠️  [DEPRECATED] recipe.md 형식은 v2에서 제거 예정입니다. "
+            "recipe.yaml로 마이그레이션하세요.",
+            file=sys.stderr,
+        )
         content = extract_yaml_from_md(content)
     return parse_simple_yaml(content)
 

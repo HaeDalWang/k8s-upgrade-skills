@@ -36,24 +36,34 @@ get_path() {
 ALL_TOOLS="claude kiro cursor windsurf gemini opencode antigravity copilot"
 ACTION="install"
 SELECTED=""
+FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tool)      SELECTED="$2"; shift 2 ;;
     --all)       SELECTED="$ALL_TOOLS"; shift ;;
+    --force)     FORCE=true; shift ;;
     --uninstall) ACTION="uninstall"; shift ;;
     --status)    ACTION="status"; shift ;;
     --help|-h)
-      echo "Usage: $0 [--tool TOOL] [--all] [--uninstall] [--status]"
+      echo "Usage: $0 [--tool TOOL] [--all] [--force] [--uninstall] [--status]"
       echo ""
       echo "Tools: claude, kiro, cursor, windsurf, gemini, opencode, antigravity, copilot"
       echo ""
+      echo "Options:"
+      echo "  --tool TOOL   Install for a specific tool"
+      echo "  --all         Install for all tools"
+      echo "  --force       Overwrite existing installation (update)"
+      echo "  --uninstall   Remove from all tools"
+      echo "  --status      Show install status"
+      echo ""
       echo "Examples:"
-      echo "  $0                  # interactive"
-      echo "  $0 --tool claude    # Claude Code only"
-      echo "  $0 --all            # all tools"
-      echo "  $0 --uninstall      # remove all"
-      echo "  $0 --status         # check status"
+      echo "  $0                      # interactive"
+      echo "  $0 --tool claude        # Claude Code only"
+      echo "  $0 --all                # all tools"
+      echo "  $0 --all --force        # update all tools"
+      echo "  $0 --uninstall          # remove all"
+      echo "  $0 --status             # check status"
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -141,8 +151,13 @@ echo ""
 for t in $SELECTED; do
   dest=$(get_path "$t")
   if [[ -d "$dest" ]]; then
-    echo "  [SKIP] $t: already installed (${dest/#$HOME/~})"
-    continue
+    if [[ "$FORCE" = true ]]; then
+      rm -rf "$dest"
+      echo "  [UPD]  $t: updating (${dest/#$HOME/~})"
+    else
+      echo "  [SKIP] $t: already installed (use --force to update)"
+      continue
+    fi
   fi
   mkdir -p "$(dirname "$dest")"
   cp -r "$SKILL_SRC" "$dest"
@@ -156,7 +171,11 @@ if [[ -d "$SCRIPTS_SRC" ]]; then
     dest=$(get_path "$t")
     scripts_dest="$(dirname "$dest")/scripts"
     if [[ -d "$scripts_dest" ]]; then
-      continue
+      if [[ "$FORCE" = true ]]; then
+        rm -rf "$scripts_dest"
+      else
+        continue
+      fi
     fi
     mkdir -p "$scripts_dest"
     cp -r "$SCRIPTS_SRC"/* "$scripts_dest/"

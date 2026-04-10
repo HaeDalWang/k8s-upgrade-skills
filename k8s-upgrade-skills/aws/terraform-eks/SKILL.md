@@ -47,7 +47,7 @@ python3 scripts/validate_recipe.py recipe.yaml
 Print this plan to the user before starting, filling in the actual version numbers:
 
 ```
-[Phase 0] Pre-flight Validation     → Gate: 16개 규칙 전부 PASS (rules/ 참조)
+[Phase 0] Pre-flight Validation     → Gate: 17개 규칙 전부 PASS (rules/ 참조)
 [Phase 1] Discovery & tfvars Update → Gate: TF_DIR found, version/AMI values updated
 [Phase 2] Control Plane Upgrade     → Gate: cluster status=ACTIVE, version={TARGET_VERSION}
 [Phase 3] Add-on Safety Gate        → Gate: all add-ons status=ACTIVE
@@ -65,7 +65,7 @@ Report format and abort conditions: see [reference.md](reference.md).
 
 **Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
 
-### 결정론적 검증 (gate_check.py) — 16개 규칙 전체
+### 결정론적 검증 (gate_check.py) — 17개 규칙 전체
 
 **스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
 
@@ -88,7 +88,7 @@ python3 scripts/gate_check.py \
 | `1` | Gate BLOCKED — CRITICAL 실패 존재 | **즉시 중단**. audit.log 내용을 사용자에게 보고. Phase 1 진행 금지 |
 | `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 1 진행 |
 
-**스크립트가 검증하는 규칙 (16개)**:
+**스크립트가 검증하는 규칙 (17개)**:
 - COM-001: 클러스터 기본 상태 (노드 Ready, 리소스 압박)
 - COM-002: 버전 호환성 (minor +1 제약)
 - COM-002a: kubelet 버전 skew
