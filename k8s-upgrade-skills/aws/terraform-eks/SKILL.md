@@ -69,16 +69,17 @@ Report format and abort conditions: see [reference.md](reference.md).
 
 **스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
 
+> **경로 주의**: 이 스크립트는 워크스페이스 루트가 아닌 **이 SKILL.md가 위치한 스킬 디렉토리 기준**으로 찾는다.
+> 예: SKILL.md가 `k8s-upgrade-skills/aws/terraform-eks/SKILL.md`라면 스크립트 경로는 `k8s-upgrade-skills/scripts/gate_check.py`
+
 ```bash
-python3 scripts/gate_check.py \
+python3 k8s-upgrade-skills/scripts/gate_check.py \
   --cluster-name "${CLUSTER_NAME}" \
   --current-version "${CURRENT_VERSION}" \
   --target-version "${TARGET_VERSION}" \
   --tf-dir "${TF_DIR}" \
   --audit-log audit.log
 ```
-
-> `scripts/gate_check.py`는 이 SKILL.md와 같은 스킬 디렉토리 내 `scripts/` 폴더에 있다. 상대경로로 참조한다.
 
 **Exit code 해석**:
 
