@@ -8,6 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Lucide Icons CDN -->
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<!-- Mermaid CDN -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
 /* === VIEWPORT BASE (MANDATORY) === */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,15 +26,17 @@ img, svg { max-width: 100%; height: auto; }
   --bg: #0d1117;
   --bg-alt: #0a0e14;
   --fg: #e6edf3;
-  --fg-muted: rgba(230,237,243,0.55);
-  --fg-dim: rgba(230,237,243,0.3);
-  --electric: #58a6ff;
-  --volt: #f0883e;
-  --neon: #3fb950;
-  --red: #f85149;
-  --purple: #bc8cff;
-  --surface: rgba(88,166,255,0.06);
-  --border: rgba(88,166,255,0.12);
+  --fg-muted: rgba(230,237,243,0.5);
+  --fg-dim: rgba(230,237,243,0.28);
+  /* Restrained palette — 5 accent colors, used one-per-slide */
+  --electric: #58a6ff;   /* blue  — info / architecture */
+  --volt: #e8914a;       /* amber — warning / entry point */
+  --neon: #3fb950;       /* green — success / solution */
+  --red: #e5534b;        /* red   — danger / safety */
+  --purple: #a371f7;     /* purple — roadmap / routing */
+  /* Neutral border — same for all cards, no per-color borders */
+  --border: rgba(230,237,243,0.08);
+  --border-hover: rgba(230,237,243,0.14);
   --font-display: 'Clash Display', sans-serif;
   --font-body: 'General Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -120,11 +124,17 @@ p, li {
 
 /* === CARDS === */
 .card {
-  background: rgba(255,255,255,0.03);
+  background: rgba(255,255,255,0.025);
   border: 1px solid var(--border);
   border-radius: clamp(8px,1vw,14px);
   padding: clamp(1rem,2vh,1.8rem) clamp(1.2rem,2vw,2rem);
 }
+/* Accent left-border variant — one color per slide context */
+.card-accent-l { border-left: 2px solid var(--electric); }
+.card-accent-l.red { border-left-color: var(--red); }
+.card-accent-l.green { border-left-color: var(--neon); }
+.card-accent-l.orange { border-left-color: var(--volt); }
+.card-accent-l.purple { border-left-color: var(--purple); }
 
 /* === ICON WRAPPER === */
 .icon-wrap {
@@ -198,6 +208,26 @@ p, li {
   from { width: 0; } to { width: 100%; }
 }
 
+/* === MERMAID DIAGRAM SIZING === */
+.mermaid { width: 100%; display: flex; justify-content: center; }
+.mermaid svg {
+  max-height: min(58vh, 420px) !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+}
+/* 오른쪽 파이프라인만 폰트 크게 */
+.mermaid-right svg {
+  max-height: min(58vh, 420px) !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+}
+.mermaid-right svg text,
+.mermaid-right svg .label {
+  font-size: 1.45em !important;
+}
+
 /* === RESPONSIVE HEIGHT === */
 @media (max-height: 700px) {
   h1 { font-size: clamp(2.5rem,6vw,4.5rem); }
@@ -228,46 +258,45 @@ p, li {
 
   <div class="reveal visible" style="display:flex;gap:clamp(0.5rem,1vw,0.8rem);">
     <span class="chip chip--blue">EKS + Terraform</span>
-    <span class="chip chip--orange">AI Agent</span>
-    <span class="chip chip--green">Zero Downtime</span>
+    <span class="chip chip--orange">AI Agent Skill</span>
   </div>
-  <h1 class="reveal visible reveal-d1" style="text-align:center;">K8s <span class="gradient-text">Upgrade</span> Skills</h1>
-  <p class="text-muted reveal visible reveal-d2" style="text-align:center;max-width:30ch;font-size:clamp(1.3rem,2.5vw,2rem);">AI Agent 기반 Phase-gated 검증으로<br>Kubernetes 무중단 업그레이드 자동화</p>
-  <span class="slide-num">01 / 18</span>
+  <h1 class="reveal visible reveal-d1" style="text-align:center;">K8S <span class="gradient-text">Upgrade</span> Skills</h1>
+  <p class="text-muted reveal visible reveal-d2" style="text-align:center;max-width:30ch;font-size:clamp(1.3rem,2.5vw,2rem);">AI Agent 기반 검증으로<br>Kubernetes 버전 업그레이드 자동화</p>
+  <span class="slide-num">01 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 2: 프로젝트 계기 — AS-IS 프로세스 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 70% 50% at 75% 30%,rgba(248,81,73,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 45% at 80% 25%,rgba(229,83,75,0.06) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--red reveal visible"><i data-lucide="alert-triangle" style="width:14px;height:14px;"></i> 프로젝트 계기</span>
     <h2 class="reveal visible reveal-d1">기존 업그레이드 <span class="text-red">프로세스</span></h2>
 
-    <!-- Horizontal flow chart -->
+    <!-- Horizontal flow chart — 단일 neutral 색 -->
     <div class="reveal visible reveal-d2" style="display:flex;align-items:stretch;gap:clamp(0.2rem,0.4vw,0.4rem);flex-wrap:wrap;justify-content:center;margin-top:clamp(0.5rem,1vh,1rem);">
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.4rem;flex:1;min-width:120px;">
-        <div class="flow-node flow-node--orange" style="width:100%;justify-content:center;font-size:clamp(0.75rem,1.2vw,1rem);">고객 요청 접수</div>
+        <div style="width:100%;display:flex;justify-content:center;padding:clamp(0.4rem,0.7vh,0.6rem) clamp(0.5rem,1vw,0.8rem);border-radius:8px;font-size:clamp(0.85rem,1.4vw,1.1rem);font-weight:500;background:rgba(230,237,243,0.05);border:1px solid rgba(230,237,243,0.15);color:var(--fg);">고객 요청 접수</div>
         <span class="text-xs text-dim">작업 요청서 수신</span>
       </div>
       <span class="flow-arrow" style="align-self:flex-start;margin-top:clamp(0.5rem,0.8vh,0.7rem);">→</span>
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.4rem;flex:1;min-width:120px;">
-        <div class="flow-node flow-node--blue" style="width:100%;justify-content:center;font-size:clamp(0.75rem,1.2vw,1rem);">리소스 분석</div>
+        <div style="width:100%;display:flex;justify-content:center;padding:clamp(0.4rem,0.7vh,0.6rem) clamp(0.5rem,1vw,0.8rem);border-radius:8px;font-size:clamp(0.85rem,1.4vw,1.1rem);font-weight:500;background:rgba(230,237,243,0.05);border:1px solid rgba(230,237,243,0.15);color:var(--fg);">리소스 분석</div>
         <span class="text-xs text-dim">클러스터 상태 확인</span>
       </div>
       <span class="flow-arrow" style="align-self:flex-start;margin-top:clamp(0.5rem,0.8vh,0.7rem);">→</span>
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.4rem;flex:1;min-width:120px;">
-        <div class="flow-node flow-node--purple" style="width:100%;justify-content:center;font-size:clamp(0.75rem,1.2vw,1rem);">문서 작성</div>
-        <span class="text-xs text-dim">절차서 + 명령어 + 일정</span>
+        <div style="width:100%;display:flex;justify-content:center;padding:clamp(0.4rem,0.7vh,0.6rem) clamp(0.5rem,1vw,0.8rem);border-radius:8px;font-size:clamp(0.85rem,1.4vw,1.1rem);font-weight:500;background:rgba(230,237,243,0.05);border:1px solid rgba(230,237,243,0.15);color:var(--fg);">문서 작성</div>
+        <span class="text-xs text-dim">계획서 + 명령어 + 일정 조율</span>
       </div>
       <span class="flow-arrow" style="align-self:flex-start;margin-top:clamp(0.5rem,0.8vh,0.7rem);">→</span>
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.4rem;flex:1;min-width:120px;">
-        <div class="flow-node flow-node--red" style="width:100%;justify-content:center;font-size:clamp(0.75rem,1.2vw,1rem);">실제 수행</div>
-        <span class="text-xs text-dim">수많은 절차 실행</span>
+        <div style="width:100%;display:flex;justify-content:center;padding:clamp(0.4rem,0.7vh,0.6rem) clamp(0.5rem,1vw,0.8rem);border-radius:8px;font-size:clamp(0.85rem,1.4vw,1.1rem);font-weight:500;background:rgba(230,237,243,0.05);border:1px solid rgba(230,237,243,0.15);color:var(--fg);">실제 수행</div>
+        <span class="text-xs text-dim">수많은 절차 + 예기치 못한 변수</span>
       </div>
       <span class="flow-arrow" style="align-self:flex-start;margin-top:clamp(0.5rem,0.8vh,0.7rem);">→</span>
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.4rem;flex:1;min-width:120px;">
-        <div class="flow-node flow-node--green" style="width:100%;justify-content:center;font-size:clamp(0.75rem,1.2vw,1rem);">결과 문서</div>
+        <div style="width:100%;display:flex;justify-content:center;padding:clamp(0.4rem,0.7vh,0.6rem) clamp(0.5rem,1vw,0.8rem);border-radius:8px;font-size:clamp(0.85rem,1.4vw,1.1rem);font-weight:500;background:rgba(230,237,243,0.05);border:1px solid rgba(230,237,243,0.15);color:var(--fg);">결과 보고</div>
         <span class="text-xs text-dim">작업 보고서 작성</span>
       </div>
     </div>
@@ -277,13 +306,13 @@ p, li {
       클러스터 수가 늘어날수록 소요 시간은 선형 증가.
     </p>
   </div>
-  <span class="slide-num">02 / 18</span>
+  <span class="slide-num">02 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 3: 계기 — AI Agent 활용해도 남는 문제 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 30% 60%,rgba(240,136,62,0.06) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 25% 65%,rgba(232,145,74,0.06) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--orange reveal visible"><i data-lucide="bot" style="width:14px;height:14px;"></i> AI Agent 활용 후에도</span>
     <h2 class="reveal visible reveal-d1">그래도 남는 <span class="text-volt">한계</span></h2>
@@ -312,13 +341,13 @@ p, li {
       </div>
     </div>
   </div>
-  <span class="slide-num">03 / 18</span>
+  <span class="slide-num">03 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 4: SOLUTION — 스킬로 해결 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 70% 50% at 25% 70%,rgba(88,166,255,0.06) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 20% 70%,rgba(63,185,80,0.06) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--green reveal visible"><i data-lucide="sparkles" style="width:14px;height:14px;"></i> Solution</span>
     <h2 class="reveal visible reveal-d1">AI Agent <span class="gradient-text">Skills</span>로 자동화</h2>
@@ -327,7 +356,7 @@ p, li {
       <div class="card reveal visible reveal-d2" style="text-align:center;">
         <div class="icon-wrap icon-wrap--blue" style="margin:0 auto clamp(0.5rem,1vh,0.8rem);"><i data-lucide="search" style="width:22px;height:22px;"></i></div>
         <h3>사전 검증</h3>
-        <p class="text-sm text-muted">16개 규칙 자동 감지<br>위험 요소 사전 차단</p>
+        <p class="text-sm text-muted">17개 규칙 자동 감지<br>위험 요소 사전 차단</p>
       </div>
       <div class="card reveal visible reveal-d3" style="text-align:center;">
         <div class="icon-wrap icon-wrap--orange" style="margin:0 auto clamp(0.5rem,1vh,0.8rem);"><i data-lucide="git-branch" style="width:22px;height:22px;"></i></div>
@@ -346,71 +375,13 @@ p, li {
       검증 → 실행 → 보고서까지 Agent가 반자동 수행
     </p>
   </div>
-  <span class="slide-num">04 / 18</span>
+  <span class="slide-num">04 / 16</span>
 </div>
 
 <!-- ============================================================ -->
-<!-- SLIDE 5: CORE FLOW — 전체 아키텍처 플로우차트 -->
+<!-- SLIDE 5: recipe.yaml 상세 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 80% 60% at 50% 50%,rgba(88,166,255,0.04) 0%,transparent 60%),var(--bg);">
-  <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
-    <span class="chip chip--blue reveal visible"><i data-lucide="workflow" style="width:14px;height:14px;"></i> Core Flow</span>
-    <h2 class="reveal visible reveal-d1">업그레이드 <span class="gradient-text">전체 흐름</span></h2>
-
-    <!-- CSS Flowchart -->
-    <div class="reveal visible reveal-d2" style="display:flex;flex-direction:column;align-items:center;gap:clamp(0.15rem,0.3vh,0.25rem);margin-top:clamp(0.3rem,0.5vh,0.5rem);">
-      <!-- Row 1: recipe -->
-      <div class="flow-node flow-node--purple" style="font-size:clamp(0.85rem,1.3vw,1.1rem);">
-        <i data-lucide="file-text" style="width:16px;height:16px;"></i> recipe.yaml 읽기 + 스키마 검증
-      </div>
-      <span class="flow-arrow" style="transform:rotate(90deg);font-size:clamp(0.8rem,1.2vw,1rem);">→</span>
-
-      <!-- Row 2: Phase 0 -->
-      <div style="display:flex;align-items:center;gap:clamp(0.5rem,1vw,0.8rem);">
-        <div class="flow-node flow-node--red" style="font-size:clamp(0.85rem,1.3vw,1.1rem);border-width:2px;">
-          <i data-lucide="shield-check" style="width:16px;height:16px;"></i> Phase 0: gate_check.py — 16개 규칙
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.2rem;">
-          <span class="text-xs" style="color:var(--neon);">exit 0 → OPEN</span>
-          <span class="text-xs" style="color:var(--red);">exit 1 → BLOCKED</span>
-          <span class="text-xs" style="color:var(--volt);">exit 2 → WARN</span>
-        </div>
-      </div>
-      <span class="flow-arrow" style="transform:rotate(90deg);font-size:clamp(0.8rem,1.2vw,1rem);">→</span>
-
-      <!-- Row 3: CP + Addon -->
-      <div style="display:flex;align-items:center;gap:clamp(0.3rem,0.6vw,0.5rem);">
-        <div class="flow-node flow-node--blue" style="font-size:clamp(0.8rem,1.2vw,1rem);">P1 tfvars 업데이트</div>
-        <span class="flow-arrow">→</span>
-        <div class="flow-node flow-node--blue" style="font-size:clamp(0.8rem,1.2vw,1rem);">P2 Control Plane</div>
-        <span class="flow-arrow">→</span>
-        <div class="flow-node flow-node--green" style="font-size:clamp(0.8rem,1.2vw,1rem);">P3 Add-on 검증</div>
-      </div>
-      <span class="flow-arrow" style="transform:rotate(90deg);font-size:clamp(0.8rem,1.2vw,1rem);">→</span>
-
-      <!-- Row 4: DP + Karpenter -->
-      <div style="display:flex;align-items:center;gap:clamp(0.3rem,0.6vw,0.5rem);">
-        <div class="flow-node flow-node--orange" style="font-size:clamp(0.8rem,1.2vw,1rem);">P4 Data Plane (MNG)</div>
-        <span class="flow-arrow">→</span>
-        <div class="flow-node flow-node--purple" style="font-size:clamp(0.8rem,1.2vw,1rem);">P5 Karpenter 노드</div>
-        <span class="flow-arrow">→</span>
-        <div class="flow-node flow-node--blue" style="font-size:clamp(0.8rem,1.2vw,1rem);">P6 TF Sync</div>
-        <span class="flow-arrow">→</span>
-        <div class="flow-node flow-node--green" style="font-size:clamp(0.8rem,1.2vw,1rem);border-width:2px;">P7 완료</div>
-      </div>
-    </div>
-
-    <p class="text-xs text-dim reveal visible reveal-d3" style="text-align:center;margin-top:clamp(0.3rem,0.5vh,0.5rem);">
-      각 Phase 경계에서 Gate 검증 실패 시 즉시 중단 — 역순/건너뛰기 불가
-    </p>
-  </div>
-  <span class="slide-num">05 / 18</span>
-</div>
-
-<!-- ============================================================ -->
-<!-- SLIDE 6: recipe.yaml 상세 -->
-<!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 80% 60%,rgba(240,136,62,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 80% 60%,rgba(232,145,74,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--orange reveal visible"><i data-lucide="file-code" style="width:14px;height:14px;"></i> Entry Point</span>
     <h2 class="reveal visible reveal-d1"><span class="text-volt">recipe.yaml</span> 하나로 시작</h2>
@@ -440,13 +411,88 @@ p, li {
       </div>
     </div>
   </div>
-  <span class="slide-num">06 / 18</span>
+  <span class="slide-num">05 / 16</span>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 6: CORE FLOW — 두 다이어그램 나란히 -->
+<!-- ============================================================ -->
+<div class="slide grid-bg" style="background:var(--bg);">
+  <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(0.4rem,0.8vh,0.7rem);padding-top:clamp(1.5rem,3vh,3rem);padding-bottom:clamp(1.5rem,3vh,3rem);">
+
+    <!-- 제목 — 작게 유지해서 다이어그램 공간 확보 -->
+    <div class="reveal visible" style="display:flex;align-items:center;gap:0.8rem;">
+      <span class="chip chip--blue"><i data-lucide="workflow" style="width:14px;height:14px;"></i> Core Flow</span>
+      <h2 style="font-size:clamp(1.6rem,3.2vw,2.6rem);letter-spacing:-0.03em;">업그레이드 <span class="gradient-text">전체 흐름</span></h2>
+    </div>
+
+    <!-- 두 다이어그램 + 화살표 -->
+    <div class="reveal visible reveal-d1" style="display:flex;align-items:stretch;gap:clamp(0.5rem,1vw,1rem);width:100%;flex:1;min-height:0;">
+
+      <!-- 왼쪽: 사전 검증 단계 -->
+      <div style="flex:0 0 42%;display:flex;flex-direction:column;gap:0;min-width:0;">
+        <div style="font-size:clamp(0.7rem,1vw,0.85rem);font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#e5534b;text-align:center;padding:0.3rem 0;border:1px solid rgba(229,83,75,0.3);border-bottom:none;border-radius:6px 6px 0 0;background:rgba(229,83,75,0.05);">사전 검증 단계</div>
+        <div style="border:1px solid rgba(229,83,75,0.3);border-radius:0 0 6px 6px;padding:0.3rem;background:rgba(229,83,75,0.03);">
+        <div class="mermaid" style="width:100%;">
+flowchart TD
+    A["recipe.yaml\n읽기 및 검증"] --> B0["Phase 0\ngate_check.py\n17개 규칙"]
+    B0 -- "exit 1 BLOCKED" --> STOP["즉시 중단"]
+    B0 -- "exit 2 WARN" --> UC{"사용자\n확인"}
+    UC -- "거부" --> STOP
+    UC -- "승인" --> P1["업그레이드 수행"]
+    B0 -- "exit 0 Gate OPEN" --> P1
+    style STOP fill:#3d1a1a,color:#f85149,stroke:#f85149,stroke-width:2px
+    style B0 fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff,stroke-width:2px
+    style UC fill:#2d2a1a,color:#f0883e,stroke:#f0883e,stroke-width:2px
+    style A fill:#1e1a2e,color:#a371f7,stroke:#a371f7
+    style P1 fill:#162a1e,color:#3fb950,stroke:#3fb950,stroke-width:2px
+        </div>
+        </div>
+      </div>
+
+      <!-- 가운데 화살표 -->
+      <div style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.4rem;padding:0 clamp(0.3rem,0.5vw,0.5rem);margin-top:2rem;">
+        <svg width="52" height="36" viewBox="0 0 52 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 18 L38 18" stroke="rgba(63,185,80,0.6)" stroke-width="2.5" stroke-dasharray="5,3"/>
+          <path d="M34 9 L48 18 L34 27" stroke="rgba(63,185,80,0.6)" stroke-width="2.5" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+        <span style="font-size:clamp(0.6rem,0.85vw,0.75rem);color:rgba(63,185,80,0.6);text-align:center;">Gate<br>OPEN</span>
+      </div>
+
+      <!-- 오른쪽: 실행 파이프라인 -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:0;min-width:0;">
+        <div style="font-size:clamp(0.7rem,1vw,0.85rem);font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#58a6ff;text-align:center;padding:0.3rem 0;border:1px solid rgba(88,166,255,0.3);border-bottom:none;border-radius:6px 6px 0 0;background:rgba(88,166,255,0.05);">실행 파이프라인</div>
+        <div style="border:1px solid rgba(88,166,255,0.3);border-radius:0 0 6px 6px;padding:0.3rem;background:rgba(88,166,255,0.03);display:flex;align-items:center;justify-content:center;">
+        <div class="mermaid mermaid-right" style="width:100%;">
+flowchart TD
+    P1["Phase 1\nIaC 변수 업데이트"] -- "버전 반영" --> D["Phase 2\nControl Plane"]
+    D -- "CP ACTIVE" --> E["Phase 3\nAdd-on 검증"]
+    E -- "Add-on OK" --> F["Phase 4\nData Plane"]
+    F -- "노드 Ready" --> G["Phase 5\nKarpenter 교체"]
+    G -- "Drift 완료" --> H["Phase 6\nIaC 동기화"]
+    H -- "no-change" --> I["Phase 7\n최종 검증"]
+    I -- "Pod ALL Ready" --> J["완료"]
+    style J fill:#1a3d1a,color:#3fb950,stroke:#3fb950,stroke-width:2px
+    style P1 fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style D fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style E fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style F fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style G fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style H fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+    style I fill:#1a2a3d,color:#58a6ff,stroke:#58a6ff
+        </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <span class="slide-num">06 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 7: 라우팅 아키텍처 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(188,140,255,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 50% 50%,rgba(163,113,247,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--purple reveal visible"><i data-lucide="git-fork" style="width:14px;height:14px;"></i> Architecture</span>
     <h2 class="reveal visible reveal-d1">플랫폼별 <span class="text-purple">자동 라우팅</span></h2>
@@ -460,14 +506,14 @@ p, li {
       <div class="text-xs text-dim" style="margin:clamp(0.1rem,0.2vh,0.2rem) 0;">(environment, platform, iac) 매칭</div>
       <span class="flow-arrow" style="transform:rotate(90deg);">→</span>
       <div style="display:flex;gap:clamp(1rem,2vw,2rem);">
-        <div class="card reveal visible reveal-d3" style="border-color:rgba(63,185,80,0.3);min-width:clamp(180px,22vw,280px);">
+        <div class="card reveal visible reveal-d3" style="min-width:clamp(180px,22vw,280px);">
           <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
             <span class="chip chip--green" style="font-size:clamp(0.6rem,0.9vw,0.8rem);"><i data-lucide="check" style="width:12px;height:12px;"></i> 구현 완료</span>
           </div>
           <h3 style="font-size:clamp(1rem,1.6vw,1.3rem);">AWS EKS + Terraform</h3>
           <p class="text-sm text-muted">Phase 0~7 전체 실행</p>
         </div>
-        <div class="card reveal visible reveal-d4" style="border-color:rgba(230,237,243,0.08);opacity:0.45;min-width:clamp(180px,22vw,280px);">
+        <div class="card reveal visible reveal-d4" style="opacity:0.4;min-width:clamp(180px,22vw,280px);">
           <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
             <span class="chip" style="font-size:clamp(0.6rem,0.9vw,0.8rem);background:rgba(255,255,255,0.05);color:var(--fg-dim);border:1px solid rgba(255,255,255,0.1);"><i data-lucide="calendar" style="width:12px;height:12px;"></i> 계획됨</span>
           </div>
@@ -477,13 +523,13 @@ p, li {
       </div>
     </div>
   </div>
-  <span class="slide-num">07 / 18</span>
+  <span class="slide-num">07 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 8: Phase 0 — 결정론적 사전 검증 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 30% 40%,rgba(248,81,73,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 30% 40%,rgba(229,83,75,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
     <div class="reveal visible" style="display:flex;align-items:center;gap:0.6rem;">
       <span class="chip chip--red"><i data-lucide="shield-check" style="width:14px;height:14px;"></i> Phase 0</span>
@@ -518,19 +564,19 @@ p, li {
       audit.log에 결과 자동 기록, LLM은 읽기만 가능.
     </p>
   </div>
-  <span class="slide-num">08 / 18</span>
+  <span class="slide-num">08 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 9: 왜 결정론적 검증이 필요한가 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 70% 40%,rgba(248,81,73,0.06) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 70% 40%,rgba(229,83,75,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--red reveal visible"><i data-lucide="brain" style="width:14px;height:14px;"></i> Why Not LLM Only?</span>
     <h2 class="reveal visible reveal-d1">왜 LLM에 <span class="text-red">다 맡기면 안 되는가</span></h2>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(1rem,2vw,1.5rem);">
-      <div class="card reveal visible reveal-d2" style="border-color:rgba(248,81,73,0.25);">
+      <div class="card reveal visible reveal-d2">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.5rem,1vh,0.8rem);">
           <div class="icon-wrap icon-wrap--red" style="width:32px;height:32px;"><i data-lucide="x" style="width:16px;height:16px;"></i></div>
           <h3 style="font-size:clamp(1rem,1.6vw,1.3rem);color:var(--red);">LLM 단독</h3>
@@ -542,7 +588,7 @@ p, li {
           <li class="text-sm text-muted">• 감사 추적 불가능</li>
         </ul>
       </div>
-      <div class="card reveal visible reveal-d3" style="border-color:rgba(63,185,80,0.25);">
+      <div class="card reveal visible reveal-d3">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.5rem,1vh,0.8rem);">
           <div class="icon-wrap icon-wrap--green" style="width:32px;height:32px;"><i data-lucide="check" style="width:16px;height:16px;"></i></div>
           <h3 style="font-size:clamp(1rem,1.6vw,1.3rem);color:var(--neon);">gate_check.py</h3>
@@ -560,15 +606,15 @@ p, li {
       Phase 0 = 스크립트가 판단 (신뢰도 100%) &nbsp;|&nbsp; Phase 1~7 = LLM 해석 (보조적 판단, 수동 교차 검증 권장)
     </p>
   </div>
-  <span class="slide-num">09 / 18</span>
+  <span class="slide-num">09 / 16</span>
 </div>
 
 <!-- ============================================================ -->
-<!-- SLIDE 10: 16개 검증 규칙 체계 -->
+<!-- SLIDE 10: 17개 검증 규칙 체계 -->
 <!-- ============================================================ -->
 <div class="slide grid-bg" style="background:var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(0.8rem,1.5vh,1.2rem);">
-    <h2 class="reveal visible" style="font-size:clamp(2rem,4.5vw,3.5rem);">16개 <span class="gradient-text">검증 규칙</span></h2>
+    <h2 class="reveal visible" style="font-size:clamp(2rem,4.5vw,3.5rem);">17개 <span class="gradient-text">검증 규칙</span></h2>
 
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(0.6rem,1.2vw,1rem);">
       <!-- Common -->
@@ -630,83 +676,13 @@ p, li {
       <span class="text-sm"><span style="color:var(--fg-dim);">●</span> MEDIUM/LOW — 보고만</span>
     </div>
   </div>
-  <span class="slide-num">10 / 18</span>
+  <span class="slide-num">10 / 16</span>
 </div>
 
 <!-- ============================================================ -->
-<!-- SLIDE 11: 검증 결과 리포트 예시 -->
+<!-- SLIDE 11: 결정론적 vs LLM 신뢰 모델 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:var(--bg);">
-  <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
-    <span class="chip chip--blue reveal visible"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> Report</span>
-    <h2 class="reveal visible reveal-d1">검증 결과 <span class="text-electric">리포트</span></h2>
-
-    <div class="card reveal visible reveal-d2" style="font-family:var(--font-mono);font-size:clamp(0.75rem,1.15vw,1rem);line-height:1.9;max-width:680px;">
-      <span class="text-muted">사전 검증 결과 — upgrade-skill (1.33 → 1.34)</span><br><br>
-      <span class="text-neon">✅</span> COM-001 클러스터 기본 상태 &nbsp;&nbsp;&nbsp;<span class="text-dim">CRITICAL</span><br>
-      <span class="text-neon">✅</span> COM-002 버전 호환성 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-dim">CRITICAL</span><br>
-      <span class="text-neon">✅</span> COM-003 Add-on 호환성 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-dim">HIGH</span><br>
-      <span class="text-neon">✅</span> WLS-001 PDB 차단 가능성 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-dim">CRITICAL</span><br>
-      <span class="text-volt">⚠️</span> WLS-002 단일 레플리카 위험 &nbsp;&nbsp;&nbsp;<span class="text-dim">HIGH</span><br>
-      <span class="text-neon">✅</span> WLS-003 PV 존 어피니티 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-dim">CRITICAL</span><br>
-      <span class="text-dim">... (10개 규칙 추가)</span><br><br>
-      <span class="text-dim">CRITICAL 실패: 0개 | HIGH 경고: 1개</span><br>
-      <span class="text-neon">→ 진행 가능</span> <span class="text-muted">(HIGH 경고 항목 사용자 확인 필요)</span>
-    </div>
-
-    <p class="text-xs text-dim reveal visible reveal-d3">
-      audit.log에 동일 내용 자동 기록 — 감사 추적 및 사후 분석 가능
-    </p>
-  </div>
-  <span class="slide-num">11 / 18</span>
-</div>
-
-<!-- ============================================================ -->
-<!-- SLIDE 12: 7가지 안전 규칙 -->
-<!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 70% 30%,rgba(248,81,73,0.05) 0%,transparent 60%),var(--bg);">
-  <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
-    <span class="chip chip--red reveal visible"><i data-lucide="lock" style="width:14px;height:14px;"></i> Non-negotiable</span>
-    <h2 class="reveal visible reveal-d1">7가지 <span class="text-red">안전 규칙</span></h2>
-
-    <div style="display:flex;flex-direction:column;gap:clamp(0.5rem,0.8vh,0.7rem);">
-      <div class="reveal visible reveal-d1" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">01</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">버전 건너뛰기 금지</span> <span class="text-sm text-muted">— minor +1만 허용</span></div>
-      </div>
-      <div class="reveal visible reveal-d2" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">02</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">Control Plane 먼저</span> <span class="text-sm text-muted">— DP가 CP 버전 초과 금지</span></div>
-      </div>
-      <div class="reveal visible reveal-d2" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">03</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">Phase Gate 필수</span> <span class="text-sm text-muted">— 검증 실패 시 진행 불가</span></div>
-      </div>
-      <div class="reveal visible reveal-d3" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">04</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">PDB 존중</span> <span class="text-sm text-muted">— force-drain 절대 금지</span></div>
-      </div>
-      <div class="reveal visible reveal-d3" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">05</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">순서 엄수</span> <span class="text-sm text-muted">— 건너뛰기 · 역순 금지</span></div>
-      </div>
-      <div class="reveal visible reveal-d4" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">06</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">Plan Before Apply</span> <span class="text-sm text-muted">— 모든 변경 사전 검토</span></div>
-      </div>
-      <div class="reveal visible reveal-d4" style="display:flex;align-items:baseline;gap:clamp(0.6rem,1vw,1rem);">
-        <span class="mono text-red" style="font-size:clamp(1.1rem,1.8vw,1.5rem);min-width:2em;">07</span>
-        <div><span style="font-size:clamp(1.1rem,1.8vw,1.5rem);font-weight:500;">실패 시 즉시 중단</span> <span class="text-sm text-muted">— 에러 보고 후 사용자 판단 대기</span></div>
-      </div>
-    </div>
-  </div>
-  <span class="slide-num">12 / 18</span>
-</div>
-
-<!-- ============================================================ -->
-<!-- SLIDE 13: 결정론적 vs LLM 신뢰 모델 -->
-<!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(63,185,80,0.04) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 50% 50%,rgba(63,185,80,0.04) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--green reveal visible"><i data-lucide="scale" style="width:14px;height:14px;"></i> Trust Model</span>
     <h2 class="reveal visible reveal-d1">신뢰 경계 <span class="text-neon">설계</span></h2>
@@ -714,12 +690,12 @@ p, li {
     <!-- Trust boundary flow -->
     <div class="reveal visible reveal-d2" style="display:flex;gap:clamp(1rem,2vw,2rem);align-items:stretch;">
       <!-- Script side -->
-      <div class="card" style="flex:1;border-color:rgba(63,185,80,0.3);display:flex;flex-direction:column;gap:clamp(0.5rem,1vh,0.8rem);">
+      <div class="card" style="flex:1;display:flex;flex-direction:column;gap:clamp(0.5rem,1vh,0.8rem);">
         <div style="display:flex;align-items:center;gap:0.5rem;">
           <div class="icon-wrap icon-wrap--green" style="width:32px;height:32px;"><i data-lucide="terminal" style="width:16px;height:16px;"></i></div>
           <h3 style="color:var(--neon);font-size:clamp(1.1rem,1.8vw,1.5rem);">스크립트 영역</h3>
         </div>
-        <p class="text-sm">Phase 0 — 16개 규칙 전체</p>
+        <p class="text-sm">Phase 0 — 17개 규칙 전체</p>
         <ul style="list-style:none;display:flex;flex-direction:column;gap:0.2rem;">
           <li class="text-sm text-muted">• exit code로 Gate 제어</li>
           <li class="text-sm text-muted">• kubectl/aws CLI 실제 데이터</li>
@@ -731,7 +707,7 @@ p, li {
         </div>
       </div>
       <!-- LLM side -->
-      <div class="card" style="flex:1;border-color:rgba(240,136,62,0.2);display:flex;flex-direction:column;gap:clamp(0.5rem,1vh,0.8rem);">
+      <div class="card" style="flex:1;display:flex;flex-direction:column;gap:clamp(0.5rem,1vh,0.8rem);">
         <div style="display:flex;align-items:center;gap:0.5rem;">
           <div class="icon-wrap icon-wrap--orange" style="width:32px;height:32px;"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
           <h3 style="color:var(--volt);font-size:clamp(1.1rem,1.8vw,1.5rem);">LLM 영역</h3>
@@ -743,19 +719,19 @@ p, li {
           <li class="text-sm text-muted">• Add-on 상태 해석</li>
           <li class="text-sm text-muted">• audit.log 읽기만 가능</li>
         </ul>
-        <div style="margin-top:auto;padding-top:0.5rem;border-top:1px solid rgba(240,136,62,0.15);">
+        <div style="margin-top:auto;padding-top:0.5rem;border-top:1px solid rgba(232,145,74,0.15);">
           <span class="text-sm text-volt" style="font-weight:600;">프로덕션: 수동 교차 검증 권장</span>
         </div>
       </div>
     </div>
   </div>
-  <span class="slide-num">13 / 18</span>
+  <span class="slide-num">11 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 14: 위험 시나리오 샘플 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 70% 60%,rgba(240,136,62,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 70% 60%,rgba(232,145,74,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
     <span class="chip chip--orange reveal visible"><i data-lucide="flask-conical" style="width:14px;height:14px;"></i> Testing</span>
     <h2 class="reveal visible reveal-d1">위험 시나리오 <span class="text-volt">샘플 포함</span></h2>
@@ -786,26 +762,26 @@ p, li {
     </div>
 
     <div class="reveal visible reveal-d4" style="display:flex;flex-wrap:wrap;gap:clamp(0.4rem,0.7vw,0.6rem);">
-      <span class="chip chip--red">PDB 차단</span>
-      <span class="chip chip--orange">단일 레플리카</span>
-      <span class="chip chip--purple">PV AZ 고정</span>
-      <span class="chip chip--blue">로컬 스토리지</span>
-      <span class="chip chip--green">장시간 Job</span>
-      <span class="chip chip--orange">토폴로지 제약</span>
-      <span class="chip chip--red">리소스 압박</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">PDB 차단</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">단일 레플리카</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">PV AZ 고정</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">로컬 스토리지</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">장시간 Job</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">토폴로지 제약</span>
+      <span class="chip" style="background:rgba(230,237,243,0.06);color:var(--fg-muted);border:1px solid rgba(230,237,243,0.12);">리소스 압박</span>
     </div>
 
     <p class="text-xs text-dim reveal visible reveal-d5">
       <span class="mono">kubectl apply -f yamls/</span> 로 전체 시나리오 배포 → 스킬 검증 테스트 가능
     </p>
   </div>
-  <span class="slide-num">14 / 18</span>
+  <span class="slide-num">12 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 15: 8개 AI 도구 지원 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 30% 60%,rgba(88,166,255,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 25% 60%,rgba(88,166,255,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--blue reveal visible"><i data-lucide="puzzle" style="width:14px;height:14px;"></i> Compatibility</span>
     <h2 class="reveal visible reveal-d1"><span class="gradient-text">8개</span> AI 도구 지원</h2>
@@ -843,13 +819,13 @@ p, li {
       <span class="text-dim">$</span> ./install.sh --all <span class="text-dim">         # 전체 설치</span>
     </div>
   </div>
-  <span class="slide-num">15 / 18</span>
+  <span class="slide-num">13 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 16: ROADMAP — Priority 1 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(188,140,255,0.05) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 50% 50%,rgba(163,113,247,0.05) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1rem,2vh,1.5rem);">
     <span class="chip chip--purple reveal visible"><i data-lucide="map" style="width:14px;height:14px;"></i> Roadmap — Priority 1</span>
     <h2 class="reveal visible reveal-d1">지능형 <span class="text-purple">관측성 및 Gate 강화</span></h2>
@@ -888,20 +864,20 @@ p, li {
       </div>
     </div>
   </div>
-  <span class="slide-num">16 / 18</span>
+  <span class="slide-num">14 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 17: ROADMAP — 플랫폼 확장 -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="background:radial-gradient(ellipse 60% 50% at 30% 40%,rgba(188,140,255,0.04) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="background:radial-gradient(ellipse 55% 45% at 30% 40%,rgba(163,113,247,0.04) 0%,transparent 55%),var(--bg);">
   <div class="slide-inner" style="display:flex;flex-direction:column;justify-content:center;gap:clamp(1.2rem,2.5vh,2rem);">
     <span class="chip chip--purple reveal visible"><i data-lucide="layers" style="width:14px;height:14px;"></i> Roadmap — 플랫폼 확장</span>
     <h2 class="reveal visible reveal-d1">지원 <span class="text-purple">범위 확대</span></h2>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(1rem,2vw,1.5rem);">
       <!-- Current -->
-      <div class="card reveal visible reveal-d2" style="border-color:rgba(63,185,80,0.3);">
+      <div class="card reveal visible reveal-d2">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.5rem,1vh,0.8rem);">
           <div class="icon-wrap icon-wrap--green" style="width:32px;height:32px;"><i data-lucide="check-circle" style="width:16px;height:16px;"></i></div>
           <h3 style="color:var(--neon);font-size:clamp(1.1rem,1.8vw,1.4rem);">현재 (v1)</h3>
@@ -911,11 +887,11 @@ p, li {
             <span class="chip chip--green" style="font-size:clamp(0.6rem,0.85vw,0.75rem);">AWS</span>
             <span class="text-sm">EKS + Terraform</span>
           </div>
-          <p class="text-sm text-muted">Self 검증 완료<br>16개 규칙 + 8 Phase<br>8개 AI 도구 지원</p>
+          <p class="text-sm text-muted">Self 검증 완료<br>17개 규칙 + 8 Phase<br>8개 AI 도구 지원</p>
         </div>
       </div>
       <!-- Planned -->
-      <div class="card reveal visible reveal-d3" style="border-color:rgba(188,140,255,0.2);">
+      <div class="card reveal visible reveal-d3">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.5rem,1vh,0.8rem);">
           <div class="icon-wrap icon-wrap--purple" style="width:32px;height:32px;"><i data-lucide="calendar-clock" style="width:16px;height:16px;"></i></div>
           <h3 style="color:var(--purple);font-size:clamp(1.1rem,1.8vw,1.4rem);">계획됨</h3>
@@ -942,13 +918,13 @@ p, li {
       <p class="text-xs text-dim">새 플랫폼 추가 = Sub-Skill 디렉토리 + 라우팅 테이블 1행 추가</p>
     </div>
   </div>
-  <span class="slide-num">17 / 18</span>
+  <span class="slide-num">15 / 16</span>
 </div>
 
 <!-- ============================================================ -->
 <!-- SLIDE 18: CLOSING — Quick Start -->
 <!-- ============================================================ -->
-<div class="slide grid-bg" style="flex-direction:column;gap:clamp(1.5rem,3vh,3rem);background:radial-gradient(ellipse 80% 60% at 50% 50%,rgba(88,166,255,0.06) 0%,transparent 60%),var(--bg);">
+<div class="slide grid-bg" style="flex-direction:column;gap:clamp(1.5rem,3vh,3rem);background:radial-gradient(ellipse 70% 55% at 50% 50%,rgba(88,166,255,0.05) 0%,transparent 55%),var(--bg);">
   <div style="position:absolute;top:15%;left:12%;width:clamp(120px,18vw,240px);height:clamp(120px,18vw,240px);border-radius:50%;background:radial-gradient(circle,rgba(63,185,80,0.08) 0%,transparent 70%);filter:blur(50px);animation:floatOrb 7s ease-in-out infinite;pointer-events:none;"></div>
   <div style="position:absolute;bottom:18%;right:10%;width:clamp(100px,16vw,200px);height:clamp(100px,16vw,200px);border-radius:50%;background:radial-gradient(circle,rgba(240,136,62,0.06) 0%,transparent 70%);filter:blur(40px);animation:floatOrb 9s ease-in-out infinite reverse;pointer-events:none;"></div>
 
@@ -973,7 +949,7 @@ p, li {
     <span class="chip chip--green"><i data-lucide="scaling" style="width:12px;height:12px;"></i> Karpenter</span>
     <span class="chip chip--purple"><i data-lucide="bot" style="width:12px;height:12px;"></i> AI Agent</span>
   </div>
-  <span class="slide-num">18 / 18</span>
+  <span class="slide-num">16 / 16</span>
 </div>
 
 <!-- ============================================================ -->
@@ -984,6 +960,32 @@ p, li {
 <script>
 /* === LUCIDE ICONS INIT === */
 lucide.createIcons();
+
+/* === MERMAID INIT — dark theme === */
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#0d1117',
+    primaryColor: '#1a2a3d',
+    primaryTextColor: '#e6edf3',
+    primaryBorderColor: '#58a6ff',
+    lineColor: 'rgba(230,237,243,0.4)',
+    secondaryColor: '#1a1f2e',
+    tertiaryColor: '#161b22',
+    edgeLabelBackground: '#0d1117',
+    clusterBkg: '#161b22',
+    titleColor: '#e6edf3',
+    fontFamily: "'General Sans', sans-serif",
+    fontSize: '16px',
+  },
+  flowchart: {
+    curve: 'basis',
+    padding: 16,
+    nodeSpacing: 30,
+    rankSpacing: 30,
+  }
+});
 
 /* === SLIDE NAVIGATION === */
 (function() {
