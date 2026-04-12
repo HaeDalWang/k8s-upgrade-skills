@@ -167,20 +167,18 @@ graph TD
 ```
 ├── k8s-upgrade-skills/                 # AI Agent 스킬 정의 (핵심)
 │   ├── SKILL.md                        #   루트 라우터 — recipe 검증 + Sub-Skill 분기
+│   ├── scripts/                        #   결정론적 검증 스크립트 (스킬 내 포함)
+│   │   ├── gate_check.py              #     Phase 0 독립 검증 (exit code로 Gate 제어)
+│   │   └── validate_recipe.py         #     recipe.yaml 스키마 검증
 │   └── aws/terraform-eks/              #   EKS + Terraform 업그레이드 스킬
 │       ├── SKILL.md                    #     Phase 0~7 실행 절차
 │       ├── reference.md               #     보고서 템플릿, 중단 조건
-│       └── rules/                     #     사전 검증 규칙 시스템 (17개)
+│       └── rules/                     #     사전 검증 규칙 시스템
 │           ├── rule-index.md          #       규칙 색인 + 실행 순서
-│           ├── common/                #       공통 규칙 (4개: COM-001, COM-002, COM-002a, COM-003)
-│           ├── workload-safety/       #       워크로드 안전성 규칙 (6개)
-│           ├── capacity/              #       용량 검증 규칙 (3개)
-│           └── infrastructure/        #       인프라 검증 규칙 (4개: INF-001~004)
-├── scripts/                            # 결정론적 검증 스크립트 (P0 Gate)
-│   ├── gate_check.py                  #   Phase 0 독립 검증 (17개 규칙, exit code로 Gate 제어)
-│   └── validate_recipe.py             #   recipe.yaml 스키마 검증
-├── tests/                              # 테스트
-│   └── test_gate_check.py            #   gate_check.py 단위 테스트 (pytest)
+│           ├── common/                #       공통 규칙
+│           ├── workload-safety/       #       워크로드 안전성 규칙
+│           ├── capacity/              #       용량 검증 규칙
+│           └── infrastructure/        #       인프라 검증 규칙
 ├── docs/                               # 운영 문서
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차

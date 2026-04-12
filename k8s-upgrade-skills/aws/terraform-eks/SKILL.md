@@ -70,8 +70,6 @@ Report format and abort conditions: see [reference.md](reference.md).
 **스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
 
 ```bash
-# 프로젝트 루트의 scripts/ 디렉토리에서 실행
-# 스크립트가 없으면 install.sh로 설치된 경로에서 찾는다
 python3 scripts/gate_check.py \
   --cluster-name "${CLUSTER_NAME}" \
   --current-version "${CURRENT_VERSION}" \
@@ -79,6 +77,8 @@ python3 scripts/gate_check.py \
   --tf-dir "${TF_DIR}" \
   --audit-log audit.log
 ```
+
+> `scripts/gate_check.py`는 이 SKILL.md와 같은 스킬 디렉토리 내 `scripts/` 폴더에 있다. 상대경로로 참조한다.
 
 **Exit code 해석**:
 
