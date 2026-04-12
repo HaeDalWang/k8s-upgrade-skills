@@ -69,13 +69,8 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 git clone https://github.com/HaeDalWang/k8s-upgrade-skills.git
 cd k8s-upgrade-skills
 ./install.sh
-
-# 2. (선택) 테스트 실행
-pip install pytest hypothesis
-python3 -m pytest tests/
-
-# 3. 쿠버네티스를 관리하는 프로젝트 디렉토리의 recipe.yaml 작성
-# 4. AI Agent에게 요청: "클러스터를 업그레이드해줘"
+# 2. 쿠버네티스를 관리하는 프로젝트 디렉토리의 recipe.yaml 작성
+# 3. AI Agent에게 요청: "클러스터를 업그레이드해줘"
 ```
 
 > 테스트할 Kubernetes 클러스터가 없다면? [example/terraform-eks/](example/terraform-eks/)에 EKS + Karpenter 참조 인프라와 위험 시나리오 샘플이 포함되어 있습니다. Terraform으로 바로 배포하고 스킬을 테스트해볼 수 있습니다.
@@ -122,33 +117,6 @@ output_language: ko       # ko | en
 notes: ""                 # 특이사항
 ```
 
-스키마 검증:
-```bash
-python3 scripts/validate_recipe.py recipe.yaml
-```
-
-> `recipe.md`(마크다운 내 YAML 블록)도 하위 호환으로 지원됩니다. **Deprecated**: v2에서 제거 예정이므로 새 프로젝트에서는 `recipe.yaml`을 사용하세요.
-> target_version은 current_version 대비 마이너 버전 +1만 허용됩니다. (예: "1.34" → "1.35" ✅, "1.34" → "1.36" ❌)
-
-흔한 실수와 에러 메시지:
-
-| 실수 | 에러 메시지 | 해결 |
-|------|------------|------|
-| 버전에 따옴표 누락 (`1.34` → YAML이 float로 파싱) | `형식 오류 '1.3400...'` | `"1.34"` 따옴표 추가 |
-| 버전 건너뛰기 (`1.33` → `1.36`) | `버전 건너뛰기 불가 (gap=3)` | 한 단계씩 실행 |
-| 미지원 플랫폼 조합 | `미지원 조합: (on-prem, kubespray, none)` | 개발 현황 확인 |
-| 필수 필드 누락 | `필수 필드 누락: 'cluster_name'` | 해당 필드 추가 |
-
-### MCP 서버 (선택)
-플랫폼 및 IaC 종류에 따라 MCP를 추가하면 더 정확한 검증이 가능합니다
-
-| MCP 서버 | 용도 |
-|----------|------|
-| `awslabs.eks-mcp-server` | EKS Insights, K8s 리소스 조회 |
-| `kubernetes-mcp-server` | kubectl 기반 노드/Pod 상태 조회 |
-
-MCP 서버가 없어도 Agent는 AWS CLI / kubectl 등 일반적인 Command로 fallback합니다.
-
 ### 필요 권한 (IAM / RBAC)
 
 이 스킬이 실행하는 명령어에 필요한 최소 권한은 [docs/required-permissions.md](docs/required-permissions.md)를 참조하세요.
@@ -185,12 +153,12 @@ graph TD
 
 | 검증 주체 | 카테고리 | 규칙 수 | 핵심 검증 내용 |
 |-----------|----------|---------|---------------|
-| 🔧 스크립트 | common | 4개 | 클러스터 상태, 버전 호환성, kubelet skew, Add-on 호환성 |
-| 🔧 스크립트 | workload-safety | 6개 | PDB 차단, 단일 레플리카, PV AZ 고정, 로컬 스토리지, 장시간 Job, 토폴로지 제약 |
-| 🔧 스크립트 | capacity | 3개 | 노드 용량 여유분, 리소스 압박 Pod, Surge 용량 |
-| 🔧 스크립트 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
+| 스크립트 | common | 4개 | 클러스터 상태, 버전 호환성, kubelet skew, Add-on 호환성 |
+| 스크립트 | workload-safety | 6개 | PDB 차단, 단일 레플리카, PV AZ 고정, 로컬 스토리지, 장시간 Job, 토폴로지 제약 |
+| 스크립트 | capacity | 3개 | 노드 용량 여유분, 리소스 압박 Pod, Surge 용량 |
+| 스크립트 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
 
-🔧 = `scripts/gate_check.py`가 결정론적으로 판단 (exit code 기반, LLM bypass 불가)
+스크립트 = `scripts/gate_check.py`가 결정론적으로 판단 (exit code 기반, LLM bypass 불가)
 
 심각도: `CRITICAL`(즉시 중단) > `HIGH`(사용자 확인) > `MEDIUM`(보고만) > `LOW`(참고)
 
