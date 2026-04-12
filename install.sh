@@ -164,26 +164,6 @@ for t in $SELECTED; do
   echo "  [OK]   $t -> ${dest/#$HOME/~}"
 done
 
-# Install gate-check scripts alongside skills
-SCRIPTS_SRC="$SCRIPT_DIR/scripts"
-if [[ -d "$SCRIPTS_SRC" ]]; then
-  for t in $SELECTED; do
-    dest=$(get_path "$t")
-    scripts_dest="$(dirname "$dest")/scripts"
-    if [[ -d "$scripts_dest" ]]; then
-      if [[ "$FORCE" = true ]]; then
-        rm -rf "$scripts_dest"
-      else
-        continue
-      fi
-    fi
-    mkdir -p "$scripts_dest"
-    cp -r "$SCRIPTS_SRC"/* "$scripts_dest/"
-    chmod +x "$scripts_dest"/*.py 2>/dev/null || true
-    echo "  [OK]   $t scripts -> ${scripts_dest/#$HOME/~}"
-  done
-fi
-
 echo ""
 echo "Done! Create recipe.yaml in your EKS project, then ask your AI agent:"
 echo '  "EKS 클러스터를 업그레이드해줘"'
