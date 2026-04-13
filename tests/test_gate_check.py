@@ -14,7 +14,7 @@ import unittest.mock
 import pytest
 
 # ── gate_check 모듈 import ──
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'k8s-upgrade-skills', 'scripts'))
 import gate_check
 
 

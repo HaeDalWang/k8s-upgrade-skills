@@ -1,0 +1,4 @@
+# file: /Users/baeseungdo/work/k8s-upgrade-skills/k8s-upgrade-skills/scripts/lib.py
+# hypothesis_version: 6.141.1
+
+[1000, 1024, '\x1b[0;31m', '\x1b[0;32m', '\x1b[0;33m', '\x1b[0;36m', '\x1b[0m', '%Y-%m-%dT%H:%M:%SZ', '-A', '-o', 'BLOCKED', 'CREATE_FAILED', 'CRITICAL', 'DEGRADED', 'FAIL', 'Gi', 'HIGH', 'Ki', 'M', 'Mi', 'OPEN', 'PASS', 'SKIP', 'WARN', 'amazon-cloudwatch', 'amazon-guardduty', 'aws-secrets-manager', 'aws_eks_node_group', 'aws_launch_template', 'cert-manager', 'get', 'json', 'karpenter', 'kube-node-lease', 'kube-public', 'kube-system', 'kubectl', 'm', 'utf-8']
