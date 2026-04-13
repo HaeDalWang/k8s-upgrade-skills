@@ -525,7 +525,8 @@ def check_inf002(target_version: str) -> None:
         "--query", "Parameters | length(@)",
         "--output", "text",
     ])
-    al2023 = int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else 0
+    _al2023_first = r.stdout.strip().split()[0] if r.returncode == 0 and r.stdout.strip() else "0"
+    al2023 = int(_al2023_first) if _al2023_first.isdigit() else 0
 
     if al2023 > 0:
         ami_found += 1
@@ -543,7 +544,8 @@ def check_inf002(target_version: str) -> None:
         "--query", "Parameters | length(@)",
         "--output", "text",
     ])
-    br = int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else 0
+    _br_first = r.stdout.strip().split()[0] if r.returncode == 0 and r.stdout.strip() else "0"
+    br = int(_br_first) if _br_first.isdigit() else 0
 
     if br > 0:
         ami_found += 1
