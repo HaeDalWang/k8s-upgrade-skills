@@ -47,7 +47,7 @@ python3 scripts/validate_recipe.py recipe.yaml
 Print this plan to the user before starting, filling in the actual version numbers:
 
 ```
-[Phase 0] Pre-flight Validation     → Gate: 17개 규칙 전부 PASS (rules/ 참조)
+[Phase 0] Pre-flight Validation     → Gate: 17개 규칙 전부 PASS (gate_check.py)
 [Phase 1] Discovery & tfvars Update → Gate: TF_DIR found, version/AMI values updated
 [Phase 2] Control Plane Upgrade     → Gate: cluster status=ACTIVE, version={TARGET_VERSION}
 [Phase 3] Add-on Safety Gate        → Gate: all add-ons status=ACTIVE
@@ -65,7 +65,7 @@ Report format and abort conditions: see [reference.md](reference.md).
 
 **Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
 
-### 결정론적 검증 (gate_check.py) — 17개 규칙 전체
+### 사전 검증 (gate_check.py) — 17개 규칙 전체
 
 **스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
 
@@ -114,10 +114,10 @@ python3 k8s-upgrade-skills/scripts/gate_check.py \
 
 | 단계 | 카테고리 | 규칙 수 | 핵심 검증 내용 |
 |------|----------|---------|---------------|
-| 1 | [common/](rules/common/) | 3개 | 클러스터 상태, 버전 호환성, Add-on 준비 |
-| 2 | [workload-safety/](rules/workload-safety/) | 6개 | PDB, 단일 레플리카, PV AZ, 로컬 스토리지, Job, 토폴로지 |
-| 3 | [capacity/](rules/capacity/) | 3개 | 노드 여유분, 리소스 압박, surge 용량 |
-| 4 | [infrastructure/](rules/infrastructure/) | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
+| 1 | common | 3개 | 클러스터 상태, 버전 호환성, Add-on 준비 |
+| 2 | workload-safety | 6개 | PDB, 단일 레플리카, PV AZ, 로컬 스토리지, Job, 토폴로지 |
+| 3 | capacity | 3개 | 노드 여유분, 리소스 압박, surge 용량 |
+| 4 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
 
 ### 판정 기준
 
@@ -160,7 +160,7 @@ CRITICAL 실패: 0개 | HIGH 경고: 1개 | MEDIUM 참고: 0개
 → 진행 가능 (HIGH 경고 항목 사용자 확인 필요)
 ```
 
-> 각 규칙의 상세 검증 명령어, Gate 조건, 조치 방안은 [rules/](rules/) 디렉토리의 개별 파일을 참조한다.
+> FAIL 시 스크립트 출력에 조치 방안 힌트가 포함됩니다. audit.log와 함께 사용자에게 보고하세요.
 
 ---
 
@@ -246,6 +246,25 @@ aws eks describe-cluster --name "${CLUSTER_NAME}" \
 - `status == "ACTIVE"` AND `version == TARGET_VERSION` → Proceed to Phase 3.
 - `status == "FAILED"` → **STOP immediately**. Report the error.
 
+### 2-4. Gate 검증
+
+**스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase2 \
+  --cluster-name "${CLUSTER_NAME}" \
+  --target-version "${TARGET_VERSION}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — CP 업그레이드 완료 | Phase 3 진행 |
+| `1` | FAIL — CP 상태 비정상 | **즉시 중단**. audit.log 보고 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+
 ---
 
 ## Phase 3: Add-on Safety Gate
@@ -274,6 +293,24 @@ kubectl get pods -n kube-system \
 ```
 
 **Gate**: All pods `Running` with `READY=True`. If `Pending` or `CrashLoopBackOff` → investigate and report.
+
+### 3-3. Gate 검증
+
+**스크립트가 Gate를 판단한다.**
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase3 \
+  --cluster-name "${CLUSTER_NAME}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — 모든 Add-on ACTIVE + kube-system Pod 정상 | Phase 4 진행 |
+| `1` | FAIL — Add-on 또는 Pod 비정상 | **즉시 중단**. audit.log 보고 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
 
 ---
 
@@ -350,6 +387,28 @@ kubectl delete pod -n <NAMESPACE> <STALE_POD_NAME>
 
 삭제 후 30s 대기 → 재조회하여 잔존 파드 없음 확인.
 
+### 4-4. Gate 검증
+
+**스크립트가 Gate를 판단한다.** Pod 분류(TRANSIENT/STALE/BLOCKING)는 스크립트가 수행하지만, STALE Pod 삭제는 LLM이 수행한다.
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase4 \
+  --cluster-name "${CLUSTER_NAME}" \
+  --target-version "${TARGET_VERSION}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — 모든 노드 Ready + unhealthy Pod 없음 | Phase 5 진행 |
+| `1` | FAIL — 노드 버전 불일치, FailedEvict, 또는 BLOCKING Pod | **즉시 중단**. audit.log 보고 |
+| `2` | WARN — STALE 또는 TRANSIENT Pod 존재 | STALE Pod는 LLM이 `kubectl delete pod`로 삭제 후 재실행. TRANSIENT는 60s 대기 후 재실행 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+
+> **STALE Pod 삭제**: 스크립트는 분류/보고만 수행한다. STALE Pod 삭제는 LLM이 `kubectl delete pod -n <ns> <name>` 명령으로 수행한 후, 스크립트를 재실행하여 Gate를 재검증한다.
+
 ---
 
 ## Phase 5: Karpenter Nodes (If Applicable)
@@ -391,6 +450,24 @@ kubectl get nodes -l karpenter.sh/nodepool \
 
 **Gate**: All Karpenter-managed nodes at `v${TARGET_VERSION}.x` and `READY=True`.
 
+### 5-4. Gate 검증
+
+**스크립트가 Gate를 판단한다.**
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase5 \
+  --target-version "${TARGET_VERSION}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — Karpenter 미사용 또는 모든 노드 Ready | Phase 6 진행 |
+| `1` | FAIL — Karpenter 노드 버전 불일치 또는 NotReady | **즉시 중단**. audit.log 보고 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+
 ---
 
 ## Phase 6: Full Terraform Sync
@@ -415,6 +492,24 @@ cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
 ```
 
 **Gate**: Exit code 0.
+
+### 6-3. Gate 검증
+
+**스크립트가 Gate를 판단한다.**
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase6 \
+  --tf-dir "${TF_DIR}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — 변경 없음 또는 비파괴적 변경만 | Phase 7 진행 (비파괴적 변경 시 apply 실행) |
+| `1` | FAIL — recreate 감지 또는 plan 실패 | **즉시 중단**. 사용자에게 보고 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
 
 ---
 
@@ -490,7 +585,29 @@ Use MCP `get_eks_insights`: `category=UPGRADE_READINESS`.
 
 **Gate**: All insights `PASSING`.
 
-### 7-5. Generate Completion Report
+### 7-5. Gate 검증
+
+**스크립트가 Gate를 판단한다.** Phase 2/3/4 검증을 내부적으로 재실행하고 Insights를 확인한다. STALE Pod 삭제는 LLM이 수행한다.
+
+```bash
+python3 k8s-upgrade-skills/scripts/phase_gate.py phase7 \
+  --cluster-name "${CLUSTER_NAME}" \
+  --target-version "${TARGET_VERSION}" \
+  --audit-log audit.log
+```
+
+**Exit code 해석**:
+
+| Exit Code | 의미 | 행동 |
+|-----------|------|------|
+| `0` | PASS — 전체 검증 통과 | 완료 보고서 발행 |
+| `1` | FAIL — 하위 검증 실패 또는 Insight 비정상 | **즉시 중단**. audit.log 보고. 완료 보고서 발행 금지 |
+| `2` | WARN — STALE/TRANSIENT Pod 존재 | STALE Pod는 LLM이 삭제 후 재실행. 사용자 승인 시에만 완료 보고서 발행 |
+| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+
+> **STALE Pod 삭제**: Phase 4와 동일. 스크립트는 분류/보고만 수행하고, LLM이 삭제 후 재실행한다.
+
+### 7-6. Generate Completion Report
 
 Produce the final report using the template in [reference.md](reference.md), in the language specified by `output_language` in recipe.md.
 

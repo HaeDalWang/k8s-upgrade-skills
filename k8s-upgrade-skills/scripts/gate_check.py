@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gate_check.py — Phase 0 결정론적 사전 검증 (17개 규칙 전체)
+gate_check.py — Phase 0 사전 검증 (17개 규칙 전체)
 
 이 스크립트가 Gate를 판단합니다.
   exit code 0 = Gate OPEN  (진행 가능)
@@ -15,7 +15,7 @@ Usage:
     [--tf-dir /path/to/terraform] \\
     [--audit-log audit.log]
 
-17개 사전 검증 규칙을 결정론적으로 실행합니다.
+17개 사전 검증 규칙을 실행합니다.
 --tf-dir 제공 시 INF-001/INF-004 (Terraform drift/recreate) 검증을 추가 실행합니다.
 """
 
@@ -25,35 +25,75 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════
-# 상수 및 정규식 (모듈 상단에 모아서 배치)
+# 공통 헬퍼 import (lib.py)
 # ══════════════════════════════════════════════════════════════
+try:
+    import lib as _lib
+    from lib import (
+        run_cmd, kubectl_json, _parse_cpu, _parse_mem,
+        audit_init, audit_write, audit_flush, record, GateResult,
+        RED, YELLOW, GREEN, CYAN, NC,
+        SYSTEM_NS, DATA_PLANE_RESOURCES, ADDON_BAD_STATES,
+        _gate,
+    )
+except ImportError:
+    print("ERROR: lib.py not found. Run install.sh --force to reinstall.", file=sys.stderr)
+    sys.exit(127)
 
-# ── 색상 (터미널) ──────────────────────────────────────────
-RED = "\033[0;31m"
-YELLOW = "\033[0;33m"
-GREEN = "\033[0;32m"
-CYAN = "\033[0;36m"
-NC = "\033[0m"
-
-# ── 시스템 네임스페이스 (WLS-002, WLS-004, WLS-005, WLS-006 제외 대상) ──
-SYSTEM_NS = frozenset({
-    "kube-system", "kube-node-lease", "kube-public",
-    "karpenter", "cert-manager",
-    "amazon-cloudwatch", "amazon-guardduty",
-    "aws-secrets-manager",
+# ── 모듈 레벨 mutable 변수 프록시 (하위 호환) ──
+# gate_check.critical_fail 등의 접근 패턴을 lib 모듈로 위임
+_MUTABLE_ATTRS = frozenset({
+    "critical_fail", "high_warn", "medium_info",
+    "total_pass", "total_rules", "audit_lines",
 })
 
-# ── INF-004 Data Plane 리소스 타입 ──
-DATA_PLANE_RESOURCES: frozenset = frozenset({
-    "aws_eks_node_group",
-    "aws_launch_template",
-    "aws_autoscaling_group",
-})
+
+def __getattr__(name: str):
+    if name in _MUTABLE_ATTRS:
+        return getattr(_lib, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _sync_from_gate() -> None:
+    """_gate → lib 모듈 레벨 변수 동기화 (gate_check 호환 래퍼)."""
+    _lib._sync_from_gate()
+    # gate_check.__dict__에 직접 설정된 로컬 오버라이드 제거 → __getattr__ 프록시 복원
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    for attr in _MUTABLE_ATTRS:
+        _mod.__dict__.pop(attr, None)
+
+
+def _sync_to_gate() -> None:
+    """gate_check/lib 모듈 레벨 변수 → _gate 동기화 (gate_check 호환 래퍼).
+
+    테스트에서 gate_check.critical_fail = N 으로 직접 설정한 경우,
+    해당 값을 lib 모듈로 전파한 후 _gate에 동기화한다.
+    """
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    for attr in _MUTABLE_ATTRS:
+        if attr in _mod.__dict__:
+            setattr(_lib, attr, _mod.__dict__[attr])
+    _lib._sync_to_gate()
+
+
+def reset_gate() -> None:
+    """글로벌 Gate 상태 초기화 (gate_check 호환 래퍼)."""
+    _lib.reset_gate()
+    # gate_check.__dict__에 직접 설정된 로컬 오버라이드 제거
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    for attr in _MUTABLE_ATTRS:
+        _mod.__dict__.pop(attr, None)
+
+# ══════════════════════════════════════════════════════════════
+# Phase 0 전용 상수 및 정규식
+# ══════════════════════════════════════════════════════════════
 
 # ── INF-004 Recreate 마커 정규식 ──
 RECREATE_MARKERS = re.compile(r"forces replacement|must be replaced")
@@ -61,157 +101,6 @@ REPLACE_PREFIX = re.compile(r"^\s*-/\+\s+resource\s+\"(\w+)\"\s+\"(\w+)\"", re.M
 
 # ── INF-001 Destroy/Recreate 패턴 ──
 DESTROY_PATTERN = re.compile(r"Plan:.*\d+\s+to\s+destroy")
-
-# ── COM-003 비정상 Add-on 상태 ──
-ADDON_BAD_STATES: frozenset = frozenset({"DEGRADED", "CREATE_FAILED"})
-
-
-# ══════════════════════════════════════════════════════════════
-# GateResult: 검증 상태를 캡슐화하는 클래스 (글로벌 변수 대체)
-# ══════════════════════════════════════════════════════════════
-@dataclass
-class GateResult:
-    """Gate 검증 결과를 캡슐화. 글로벌 mutable state 대신 인스턴스 사용."""
-    critical_fail: int = 0
-    high_warn: int = 0
-    medium_info: int = 0
-    total_pass: int = 0
-    total_rules: int = 0
-    audit_lines: list[str] = field(default_factory=list)
-
-    def reset(self) -> None:
-        """모든 카운터와 감사 로그 초기화."""
-        self.critical_fail = 0
-        self.high_warn = 0
-        self.medium_info = 0
-        self.total_pass = 0
-        self.total_rules = 0
-        self.audit_lines.clear()
-
-
-# ── 모듈 레벨 기본 인스턴스 (하위 호환) ──
-_gate = GateResult()
-
-# 하위 호환용 모듈 레벨 참조 (테스트에서 gate_check.critical_fail 등으로 접근)
-# property 대신 __getattr__ 로 동적 참조
-critical_fail = 0
-high_warn = 0
-medium_info = 0
-total_pass = 0
-total_rules = 0
-audit_lines: list[str] = []
-
-
-def _sync_from_gate() -> None:
-    """_gate 인스턴스의 값을 모듈 레벨 변수에 동기화 (하위 호환)."""
-    global critical_fail, high_warn, medium_info, total_pass, total_rules, audit_lines
-    critical_fail = _gate.critical_fail
-    high_warn = _gate.high_warn
-    medium_info = _gate.medium_info
-    total_pass = _gate.total_pass
-    total_rules = _gate.total_rules
-    audit_lines = _gate.audit_lines
-
-
-def _sync_to_gate() -> None:
-    """모듈 레벨 변수의 값을 _gate 인스턴스에 동기화 (테스트에서 직접 수정 시)."""
-    _gate.critical_fail = critical_fail
-    _gate.high_warn = high_warn
-    _gate.medium_info = medium_info
-    _gate.total_pass = total_pass
-    _gate.total_rules = total_rules
-    # audit_lines는 참조 동기화 — 새 리스트 할당 시 방어
-    if audit_lines is not _gate.audit_lines:
-        _gate.audit_lines = audit_lines
-
-
-def reset_gate() -> None:
-    """글로벌 Gate 상태 초기화."""
-    _gate.reset()
-    _sync_from_gate()
-
-
-# ── 감사 로그 ──────────────────────────────────────────────
-def audit_init(cluster_name: str, current_ver: str, target_ver: str) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _gate.audit_lines.extend([
-        "# K8s Upgrade Pre-flight Audit Log",
-        "# Generated by gate_check.py (deterministic)",
-        f"# Cluster: {cluster_name}",
-        f"# Upgrade: {current_ver} → {target_ver}",
-        f"# Started: {now}",
-        "# ──────────────────────────────────────────",
-    ])
-    _sync_from_gate()
-
-
-def audit_write(rule_id: str, result: str, detail: str) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _gate.audit_lines.append(f"{now} | {rule_id} | {result} | {detail}")
-    _sync_from_gate()
-
-
-def audit_flush(path: str) -> None:
-    _sync_to_gate()
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    gate = "BLOCKED" if _gate.critical_fail > 0 else ("WARN" if _gate.high_warn > 0 else "OPEN")
-    _gate.audit_lines.extend([
-        "# ──────────────────────────────────────────",
-        f"# Summary: CRITICAL_FAIL={_gate.critical_fail} HIGH_WARN={_gate.high_warn} MEDIUM_INFO={_gate.medium_info} PASS={_gate.total_pass}/{_gate.total_rules}",
-        f"# Gate: {gate}",
-        f"# Finished: {now}",
-    ])
-    Path(path).write_text("\n".join(_gate.audit_lines) + "\n", encoding="utf-8")
-    _sync_from_gate()
-
-
-# ── 결과 기록 ──────────────────────────────────────────────
-def record(rule_id: str, severity: str, result: str, detail: str) -> None:
-    global critical_fail, high_warn, medium_info, total_pass, total_rules
-    _sync_to_gate()
-    _gate.total_rules += 1
-
-    if result == "PASS" or result == "SKIP":
-        _gate.total_pass += 1
-        icon = f"{GREEN}✅ PASS{NC}" if result == "PASS" else f"{CYAN}⏭️  SKIP{NC}"
-        print(f"{icon}  {rule_id:<8s} {detail}")
-    elif result == "FAIL":
-        if severity == "CRITICAL":
-            _gate.critical_fail += 1
-            print(f"{RED}❌ FAIL{NC}  {rule_id:<8s} [{severity}] {detail}")
-        elif severity == "HIGH":
-            _gate.high_warn += 1
-            print(f"{YELLOW}⚠️  WARN{NC}  {rule_id:<8s} [{severity}] {detail}")
-        else:
-            # MEDIUM / LOW — 보고만, Gate 판정에 영향 없음
-            _gate.medium_info += 1
-            print(f"{CYAN}ℹ️  INFO{NC}  {rule_id:<8s} [{severity}] {detail}")
-
-    audit_write(rule_id, result, detail)
-    _sync_from_gate()
-
-
-# ── CLI 헬퍼 ──────────────────────────────────────────────
-def run_cmd(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
-    """subprocess wrapper — 실패 시 빈 stdout 반환."""
-    try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr=str(e))
-
-
-def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 30) -> dict:
-    """kubectl get <resource> -o json 실행 후 dict 반환."""
-    cmd = ["kubectl", "get", resource, "-o", "json"]
-    if all_ns:
-        cmd.insert(2, "-A")
-    r = run_cmd(cmd, timeout=timeout)
-    if r.returncode != 0:
-        return {}
-    try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return {}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -229,10 +118,10 @@ def check_com002(current_version: str, target_version: str) -> None:
         record("COM-002", "CRITICAL", "SKIP", "이미 동일 버전")
     elif gap > 1:
         record("COM-002", "CRITICAL", "FAIL",
-               f"버전 건너뛰기 불가 (gap={gap})")
+               f"버전 건너뛰기 불가 (gap={gap}) → 한 단계씩 업그레이드하세요 (예: 1.33→1.34→1.35)")
     else:
         record("COM-002", "CRITICAL", "FAIL",
-               f"다운그레이드 불가 (gap={gap})")
+               f"다운그레이드 불가 (gap={gap}) → target_version이 current_version보다 높아야 합니다")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -250,7 +139,7 @@ def check_com001(cluster_name: str) -> None:
 
     if status != "ACTIVE":
         record("COM-001", "CRITICAL", "FAIL",
-               f"클러스터 상태: {status} (ACTIVE 아님)")
+               f"클러스터 상태: {status} (ACTIVE 아님) → 클러스터가 ACTIVE 상태가 될 때까지 대기하세요")
         return
 
     # 2. 노드 상태
@@ -274,11 +163,11 @@ def check_com001(cluster_name: str) -> None:
 
     if not_ready > 0:
         record("COM-001", "CRITICAL", "FAIL",
-               f"NotReady 노드 {not_ready}개")
+               f"NotReady 노드 {not_ready}개 → kubectl describe node로 원인 확인 후 복구하세요")
         return
     if pressure > 0:
         record("COM-001", "CRITICAL", "FAIL",
-               f"리소스 압박 노드 {pressure}개")
+               f"리소스 압박 노드 {pressure}개 → 노드 리소스 확보 또는 스케일아웃 후 재시도하세요")
         return
 
     record("COM-001", "CRITICAL", "PASS",
@@ -300,7 +189,7 @@ def check_com002a(target_version: str) -> None:
 
     if violations > 0:
         record("COM-002a", "CRITICAL", "FAIL",
-               f"kubelet skew > 2 노드 {violations}개")
+               f"kubelet skew > 2 노드 {violations}개 → 해당 노드의 kubelet을 먼저 업그레이드하세요")
     else:
         record("COM-002a", "CRITICAL", "PASS",
                "kubelet skew 정상 (모두 ≤ 2)")
@@ -351,7 +240,7 @@ def check_com003(cluster_name: str, target_version: str) -> None:
 
     if bad_addons:
         record("COM-003", "HIGH", "FAIL",
-               f"비정상 Add-on: {', '.join(bad_addons)}")
+               f"비정상 Add-on: {', '.join(bad_addons)} → aws eks update-addon --resolve-conflicts OVERWRITE로 복구하세요")
         return
 
     # 3. TARGET_VERSION 호환 버전 확인
@@ -376,7 +265,7 @@ def check_com003(cluster_name: str, target_version: str) -> None:
 
     if incompatible:
         record("COM-003", "HIGH", "FAIL",
-               f"TARGET_VERSION {target_version} 비호환 Add-on: {', '.join(incompatible)}")
+               f"TARGET_VERSION {target_version} 비호환 Add-on: {', '.join(incompatible)} → Add-on 호환 버전 확인 후 업데이트하세요")
     else:
         record("COM-003", "HIGH", "PASS",
                f"모든 Add-on ACTIVE + {target_version} 호환")
@@ -400,7 +289,7 @@ def check_wls001() -> None:
 
     if blocked > 0:
         record("WLS-001", "CRITICAL", "FAIL",
-               f"PDB 차단 {blocked}개 (disruptionsAllowed=0)")
+               f"PDB 차단 {blocked}개 (disruptionsAllowed=0) → PDB minAvailable 낮추기 또는 replicas 증가 필요")
     else:
         record("WLS-001", "CRITICAL", "PASS",
                "모든 PDB disruptionsAllowed >= 1")
@@ -429,7 +318,7 @@ def check_wls002() -> None:
 
     if count > 0:
         record("WLS-002", "HIGH", "FAIL",
-               f"단일 레플리카 워크로드 {count}개 (다운타임 위험)")
+               f"단일 레플리카 워크로드 {count}개 (다운타임 위험) → 업그레이드 전 replicas=2로 스케일업 권장")
     else:
         record("WLS-002", "HIGH", "PASS",
                "단일 레플리카 워크로드 없음")
@@ -480,7 +369,7 @@ def check_wls003() -> None:
 
     if risks > 0:
         record("WLS-003", "CRITICAL", "FAIL",
-               f"PV AZ 위험 {risks}개 (drain 시 재스케줄 불가)")
+               f"PV AZ 위험 {risks}개 (drain 시 재스케줄 불가) → 해당 AZ에 노드 추가 또는 PV 마이그레이션 필요")
     else:
         record("WLS-003", "CRITICAL", "PASS", "PV AZ 위험 없음")
 
@@ -512,7 +401,7 @@ def check_wls004() -> None:
 
     if hostpath_count > 0:
         record("WLS-004", "MEDIUM", "FAIL",
-               f"hostPath 사용 Pod {hostpath_count}개 (노드 교체 시 데이터 유실)")
+               f"hostPath 사용 Pod {hostpath_count}개 (노드 교체 시 데이터 유실) → 데이터 백업 후 진행하거나 PVC로 마이그레이션 권장")
     else:
         record("WLS-004", "MEDIUM", "PASS",
                "hostPath 사용 Pod 없음")
@@ -557,7 +446,7 @@ def check_wls005() -> None:
 
     if risky_jobs > 0:
         record("WLS-005", "MEDIUM", "FAIL",
-               f"위험 Job Pod {risky_jobs}개 (age>30min 또는 restartPolicy=Never)")
+               f"위험 Job Pod {risky_jobs}개 (age>30min 또는 restartPolicy=Never) → Job 완료 대기 또는 CronJob suspend 후 진행 권장")
     else:
         record("WLS-005", "MEDIUM", "PASS",
                "위험 Job Pod 없음")
@@ -613,10 +502,10 @@ def check_wls006() -> None:
     if single_az:
         record("WLS-006", "HIGH", "FAIL",
                f"위험 워크로드 {len(risky)}개 + 단일 노드 AZ: "
-               f"{', '.join(single_az)}")
+               f"{', '.join(single_az)} → 해당 AZ에 노드 추가 또는 whenUnsatisfiable을 ScheduleAnyway로 변경")
     else:
         record("WLS-006", "HIGH", "FAIL",
-               f"엄격한 토폴로지 제약 워크로드 {len(risky)}개 (drain 시 Pending 위험)")
+               f"엄격한 토폴로지 제약 워크로드 {len(risky)}개 (drain 시 Pending 위험) → 노드 수 확보 또는 preferred affinity로 변경 권장")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -665,7 +554,7 @@ def check_inf002(target_version: str) -> None:
 
     if ami_missing > 0 and ami_found == 0:
         record("INF-002", "CRITICAL", "FAIL",
-               f"AMI 미출시 (AL2023={al2023}, BR={br})")
+               f"AMI 미출시 (AL2023={al2023}, BR={br}) → AWS에서 AMI 릴리스 대기 (보통 EKS 버전 출시 후 1-2주)")
     elif ami_missing > 0:
         record("INF-002", "CRITICAL", "PASS",
                f"일부 AMI 존재 (AL2023={al2023}, BR={br}) — 사용 중인 타입 확인 필요")
@@ -677,36 +566,6 @@ def check_inf002(target_version: str) -> None:
 # ══════════════════════════════════════════════════════════════
 # CAP-001: 노드 용량 여유분 검증 (HIGH)
 # ══════════════════════════════════════════════════════════════
-def _parse_cpu(s: str) -> int:
-    """CPU 문자열 → 밀리코어."""
-    if not s:
-        return 0
-    if s.endswith("m"):
-        return int(s[:-1])
-    try:
-        return int(float(s) * 1000)
-    except ValueError:
-        return 0
-
-
-def _parse_mem(s: str) -> int:
-    """메모리 문자열 → MiB."""
-    if not s:
-        return 0
-    if s.endswith("Ki"):
-        return int(s[:-2]) // 1024
-    if s.endswith("Mi"):
-        return int(s[:-2])
-    if s.endswith("Gi"):
-        return int(float(s[:-2]) * 1024)
-    if s.endswith("M"):
-        return int(s[:-1])
-    try:
-        return int(s) // (1024 * 1024)
-    except ValueError:
-        return 0
-
-
 def check_cap001() -> None:
     nodes = kubectl_json("nodes", all_ns=False)
     pods = kubectl_json("pods", timeout=60)
@@ -751,10 +610,10 @@ def check_cap001() -> None:
     util = int(max_pct)
     if util > 90:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> 90% — Pod Pending 위험)")
+               f"최대 노드 사용률 {util}% (> 90% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요")
     elif util > 80:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> 80% — drain 시 여유 부족)")
+               f"최대 노드 사용률 {util}% (> 80% — drain 시 여유 부족) → 노드 스케일업 권장")
     else:
         record("CAP-001", "HIGH", "PASS",
                f"최대 노드 사용률 {util}% (여유 충분)")
@@ -890,10 +749,10 @@ def check_cap003(cluster_name: str) -> None:
 
     if critical_low:
         record("CAP-003", "HIGH", "FAIL",
-               f"가용 IP < 10: {', '.join(critical_low)}")
+               f"가용 IP < 10: {', '.join(critical_low)} → 서브넷 CIDR 확장 또는 prefix delegation 활성화 필요")
     elif warning_low:
         record("CAP-003", "HIGH", "FAIL",
-               f"가용 IP 10~49 (고갈 위험): {', '.join(warning_low)}")
+               f"가용 IP 10~49 (고갈 위험): {', '.join(warning_low)} → surge 노드 생성 시 IP 부족 가능. 서브넷 확장 권장")
     else:
         record("CAP-003", "HIGH", "PASS",
                "모든 서브넷 가용 IP ≥ 50")
@@ -925,15 +784,15 @@ def check_inf001(tf_exit_code: int, plan_output: str) -> None:
         record("INF-001", "HIGH", "PASS", "terraform plan: 변경 없음 (no drift)")
         return
     if tf_exit_code == 1:
-        record("INF-001", "HIGH", "FAIL", "terraform plan 오류 (exit code 1)")
+        record("INF-001", "HIGH", "FAIL", "terraform plan 오류 (exit code 1) → terraform init 또는 provider 설정 확인 후 재시도")
         return
     # exit code 2 — changes detected
     if DESTROY_PATTERN.search(plan_output) or RECREATE_MARKERS.search(plan_output):
         record("INF-001", "HIGH", "FAIL",
-               "terraform drift 감지 — destroy/recreate 포함")
+               "terraform drift 감지 — destroy/recreate 포함 → terraform apply로 drift 해소 후 재시도하세요")
     else:
         record("INF-001", "HIGH", "FAIL",
-               "terraform drift 감지 — 비파괴적 변경")
+               "terraform drift 감지 — 비파괴적 변경 → terraform apply로 drift 해소 후 재시도하세요")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -963,10 +822,10 @@ def check_inf004(plan_output: str) -> None:
     data_plane_hits = [r for r in recreate_resources if r in DATA_PLANE_RESOURCES]
     if data_plane_hits:
         record("INF-004", "CRITICAL", "FAIL",
-               f"Data Plane recreate 감지: {', '.join(set(data_plane_hits))}")
+               f"Data Plane recreate 감지: {', '.join(set(data_plane_hits))} → lifecycle {{ create_before_destroy = true }} 또는 name_prefix 사용 권장")
     else:
         record("INF-004", "HIGH", "FAIL",
-               f"비-Data Plane recreate: {', '.join(set(recreate_resources))}")
+               f"비-Data Plane recreate: {', '.join(set(recreate_resources))} → recreate 대상 리소스 확인 후 사용자 승인 필요")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1028,7 +887,7 @@ def check_inf003() -> None:
     if blocked_pools:
         record("INF-003", "HIGH", "FAIL",
                f"Karpenter {version} — disruption budget=0: "
-               f"{', '.join(blocked_pools)} (drift 교체 차단)")
+               f"{', '.join(blocked_pools)} (drift 교체 차단) → NodePool disruption budget을 1 이상으로 조정하세요")
     else:
         record("INF-003", "HIGH", "PASS",
                f"Karpenter {version} — disruption budget 정상")
@@ -1039,7 +898,7 @@ def check_inf003() -> None:
 # ══════════════════════════════════════════════════════════════
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Phase 0 결정론적 사전 검증 (gate_check.py)")
+        description="Phase 0 사전 검증 (gate_check.py)")
     parser.add_argument("--cluster-name", required=True)
     parser.add_argument("--current-version", required=True)
     parser.add_argument("--target-version", required=True)
@@ -1069,7 +928,7 @@ def main() -> None:
 
     print()
     print("════════════════════════════════════════════════════════════")
-    print("  Phase 0: 결정론적 사전 검증 (gate_check.py)")
+    print("  Phase 0: 사전 검증 (gate_check.py)")
     print(f"  Cluster: {args.cluster_name}")
     print(f"  Upgrade: {args.current_version} → {args.target_version}")
     print("════════════════════════════════════════════════════════════")
@@ -1156,7 +1015,7 @@ def main() -> None:
     # ── Gate 판정 ──
     print()
     print("════════════════════════════════════════════════════════════")
-    print(f"  결정론적 검증 결과")
+    print(f"  검증 결과")
     _sync_to_gate()
     print(f"  총 {_gate.total_rules}개 규칙 | PASS: {_gate.total_pass} "
           f"| CRITICAL FAIL: {_gate.critical_fail} | HIGH WARN: {_gate.high_warn}"
@@ -1179,7 +1038,7 @@ def main() -> None:
         sys.exit(2)
     else:
         print()
-        print(f"{GREEN}Gate: OPEN — 결정론적 검증 통과.{NC}")
+        print(f"{GREEN}Gate: OPEN — 검증 통과.{NC}")
         print(f"감사 로그: {args.audit_log}")
         sys.exit(0)
 
