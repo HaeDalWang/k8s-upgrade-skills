@@ -8,14 +8,14 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 
 > **Disclaimer**: 본 스킬은 Kubernetes 업그레이드 의사결정을 보조하는 AI Agent용 도구입니다. 사전 검증, 실행 계획 수립, 모니터링 등을 자동화하지만, 실제 인프라 변경에 대한 최종 책임은 실행자(사용자)에게 있습니다. 프로덕션 환경에서는 반드시 변경 내용을 검토한 후 진행하세요.
 
-> **⚠️ 프로덕션 사용 주의**: Phase 0 사전 검증(17개 규칙)은 `scripts/gate_check.py`가 결정론적으로 판단하지만, Phase 1~7 Gate(IaC 변경 확인, Add-on 상태, 노드 Ready 판단 등)는 아직 LLM이 해석합니다. 프로덕션에서는 각 Phase 완료 후 수동 교차 검증을 권장합니다.
+> **⚠️ 프로덕션 사용 주의**: Phase 0 사전 검증(17개 규칙)은 `scripts/gate_check.py`가, Phase 2~7 Gate는 `scripts/phase_gate.py`가 스크립트로 판단합니다. Phase 1 Gate(IaC 변수 업데이트 확인)만 LLM이 해석합니다. 프로덕션에서는 각 Phase 완료 후 수동 교차 검증을 권장합니다.
 
 ## 기능
 
 - Kubernetes Control Plane / Data Plane 업그레이드 반자동 수행 (마이너 버전 +1)
   - "반자동" = Agent가 실행하되, CRITICAL/HIGH 검증 실패 시 즉시 중단하고 사용자 판단을 대기
 - 17개 사전 검증 규칙으로 업그레이드 전 위험 요소 감지 후 사용자에게 보고
-  - **결정론적 검증 (17개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
+  - **스크립트 검증 (17개)**: `scripts/gate_check.py`가 독립 실행 — LLM이 bypass 불가
     - 클러스터 상태, 버전 호환성(+kubelet skew), Add-on 호환성, PDB 차단, 단일 레플리카, PV AZ, 로컬 스토리지, 장시간 Job, 토폴로지 제약, 노드 용량, 리소스 압박 Pod, Surge 용량, Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지
 - 감사 로그(`audit.log`): 스크립트가 기록 주체, LLM은 읽기만 — 추적성 + Gate 신뢰성 확보
 - Phase-gated 실행: 각 단계 Gate 미통과 시 즉시 중단 및 사용자 보고
@@ -130,7 +130,7 @@ notes: ""                 # 특이사항
 
 ```mermaid
 graph TD
-    A[recipe.yaml 읽기 및 검증] --> B0["Phase 0: 결정론적 검증 (gate_check.py — 17개 규칙)"]
+    A[recipe.yaml 읽기 및 검증] --> B0["Phase 0: 사전 검증 (gate_check.py — 17개 규칙)"]
     B0 -- "exit 0: Gate OPEN" --> C[Phase 1: IaC 변수 업데이트]
     B0 -- "exit 1: Gate BLOCKED" --> STOP[즉시 중단 — audit.log 확인 후 해결]
     B0 -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
@@ -158,7 +158,7 @@ graph TD
 | 스크립트 | capacity | 3개 | 노드 용량 여유분, 리소스 압박 Pod, Surge 용량 |
 | 스크립트 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
 
-스크립트 = `scripts/gate_check.py`가 결정론적으로 판단 (exit code 기반, LLM bypass 불가)
+스크립트 = `scripts/gate_check.py`가 exit code 기반으로 판단 (LLM bypass 불가)
 
 심각도: `CRITICAL`(즉시 중단) > `HIGH`(사용자 확인) > `MEDIUM`(보고만) > `LOW`(참고)
 
@@ -167,18 +167,14 @@ graph TD
 ```
 ├── k8s-upgrade-skills/                 # AI Agent 스킬 정의 (핵심)
 │   ├── SKILL.md                        #   루트 라우터 — recipe 검증 + Sub-Skill 분기
-│   ├── scripts/                        #   결정론적 검증 스크립트 (스킬 내 포함)
-│   │   ├── gate_check.py              #     Phase 0 독립 검증 (exit code로 Gate 제어)
+│   ├── scripts/                        #   검증 스크립트 (스킬 내 포함)
+│   │   ├── lib.py                     #     공통 헬퍼 모듈 (gate_check.py, phase_gate.py 공유)
+│   │   ├── gate_check.py             #     Phase 0 독립 검증 (exit code로 Gate 제어)
+│   │   ├── phase_gate.py             #     Phase 2~7 Gate 검증 (exit code로 Gate 제어)
 │   │   └── validate_recipe.py         #     recipe.yaml 스키마 검증
 │   └── aws/terraform-eks/              #   EKS + Terraform 업그레이드 스킬
 │       ├── SKILL.md                    #     Phase 0~7 실행 절차
-│       ├── reference.md               #     보고서 템플릿, 중단 조건
-│       └── rules/                     #     사전 검증 규칙 시스템
-│           ├── rule-index.md          #       규칙 색인 + 실행 순서
-│           ├── common/                #       공통 규칙
-│           ├── workload-safety/       #       워크로드 안전성 규칙
-│           ├── capacity/              #       용량 검증 규칙
-│           └── infrastructure/        #       인프라 검증 규칙
+│       └── reference.md               #     보고서 템플릿, 중단 조건
 ├── docs/                               # 운영 문서
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차

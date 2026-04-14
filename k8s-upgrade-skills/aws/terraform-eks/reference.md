@@ -89,7 +89,9 @@ eks_node_ami_alias_bottlerocket = "{NEW_VALUE}"    # {OLD_VALUE} → {NEW_VALUE}
 
 If ANY of the following conditions is met, **STOP immediately** and report to the user:
 
-### Phase 0 (Pre-flight) — 규칙 기반 검증
+### Phase 0 (Pre-flight) — gate_check.py 검증
+
+`gate_check.py`가 exit code로 Gate를 판단한다. FAIL 시 출력 메시지에 조치 방안 힌트가 포함된다.
 
 | Rule ID | Condition | Severity |
 |---|---|---|
@@ -104,16 +106,20 @@ If ANY of the following conditions is met, **STOP immediately** and report to th
 | INF-001 | Terraform plan에 예상 외 destroy 포함 | HIGH |
 | INF-002 | SSM AMI 조회 결과 비어있음 | CRITICAL |
 
-### Phase 2~7 (실행 중)
+### Phase 2~7 (실행 중) — phase_gate.py 검증
 
-| Condition | Situation | Severity |
-|---|---|---|
-| `terraform plan` shows unexpected destroy | Unintended resource deletion risk | CRITICAL |
-| `FailedEvict` events during rolling update | PDB blocking drain | HIGH |
-| Add-on status `DEGRADED` / `CREATE_FAILED` | Add-on upgrade failure | HIGH |
-| Pod `CrashLoopBackOff` surge after upgrade | Version compatibility issue suspected | HIGH |
-| Control Plane status `FAILED` | AWS-side upgrade failure | CRITICAL |
-| `terraform apply` exit code != 0 | Infrastructure mutation failed | HIGH |
+`phase_gate.py`가 exit code로 Gate를 판단한다 (0=PASS, 1=FAIL, 2=WARN).
+
+| Phase | Exit Code | Condition | Action |
+|---|---|---|---|
+| Phase 2 | 1 | CP status ≠ ACTIVE 또는 version ≠ TARGET | 즉시 중단, audit.log 보고 |
+| Phase 3 | 1 | Add-on 비정상 또는 kube-system Pod 비정상 | 즉시 중단, audit.log 보고 |
+| Phase 4 | 1 | 노드 버전 불일치, FailedEvict, 또는 BLOCKING Pod | 즉시 중단, audit.log 보고 |
+| Phase 4 | 2 | STALE 또는 TRANSIENT Pod 존재 | STALE Pod 삭제 후 재실행 |
+| Phase 5 | 1 | Karpenter 노드 버전 불일치 또는 NotReady | 즉시 중단, audit.log 보고 |
+| Phase 6 | 1 | Terraform recreate 감지 또는 plan 실패 | 즉시 중단, 사용자에게 보고 |
+| Phase 7 | 1 | 하위 검증 실패 또는 Insight 비정상 | 즉시 중단, 완료 보고서 발행 금지 |
+| Phase 7 | 2 | STALE/TRANSIENT Pod 존재 | STALE Pod 삭제 후 재실행, 사용자 승인 시에만 완료 |
 
 ### On Abort
 

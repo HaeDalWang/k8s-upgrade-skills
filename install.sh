@@ -18,6 +18,15 @@ if [[ ! -d "$SKILL_SRC" ]]; then
   exit 1
 fi
 
+# Required files validation
+REQUIRED_SCRIPTS="scripts/gate_check.py scripts/phase_gate.py scripts/lib.py scripts/validate_recipe.py"
+for f in $REQUIRED_SCRIPTS; do
+  if [[ ! -f "$SKILL_SRC/$f" ]]; then
+    echo "ERROR: Missing required file: $f" >&2
+    exit 1
+  fi
+done
+
 # Tool -> global install path
 get_path() {
   case "$1" in

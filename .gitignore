@@ -9,4 +9,5 @@ crash.*.log
 .DS_Store
 .kiro/
 .history.md
-history.md.hypothesis/
+history.md
+.hypothesis/
