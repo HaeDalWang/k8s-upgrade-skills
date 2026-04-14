@@ -1417,6 +1417,86 @@ class TestClassifyPods:
         assert result.stale == []
         assert result.blocking == []
 
+    def test_running_pod_with_not_ready_container_blocking(self):
+        """Running Pod에 NotReady 컨테이너가 있고 5분 초과 → BLOCKING."""
+        now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        pod_ts = (now - timedelta(minutes=10)).isoformat()
+        pod = {
+            "metadata": {"name": "bad-pod", "namespace": "workload",
+                         "creationTimestamp": pod_ts},
+            "spec": {"nodeName": "node-1"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [
+                    {"name": "app", "ready": True},
+                    {"name": "sidecar", "ready": False},
+                ],
+            },
+        }
+        pods = {"items": [pod]}
+        result = phase_gate.classify_pods(pods, {"items": []}, now=now)
+        assert len(result.blocking) == 1
+        assert result.blocking[0]["ns"] == "workload"
+        assert "sidecar" in result.blocking[0]["reason"]
+
+    def test_running_pod_with_not_ready_container_transient(self):
+        """Running Pod에 NotReady 컨테이너가 있지만 2분 미만 → TRANSIENT."""
+        now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        pod_ts = (now - timedelta(seconds=90)).isoformat()
+        pod = {
+            "metadata": {"name": "new-pod", "namespace": "workload",
+                         "creationTimestamp": pod_ts},
+            "spec": {"nodeName": "node-1"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [
+                    {"name": "app", "ready": False},
+                ],
+            },
+        }
+        pods = {"items": [pod]}
+        result = phase_gate.classify_pods(pods, {"items": []}, now=now)
+        assert len(result.transient) == 1
+        assert result.transient[0]["name"] == "new-pod"
+        assert result.blocking == []
+
+    def test_running_pod_all_ready_skipped(self):
+        """Running Pod의 모든 컨테이너가 ready → skip (기존 동작 유지)."""
+        pod = {
+            "metadata": {"name": "ok-pod", "namespace": "default",
+                         "creationTimestamp": "2025-01-15T09:50:00Z"},
+            "spec": {"nodeName": "node-1"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [
+                    {"name": "app", "ready": True},
+                    {"name": "sidecar", "ready": True},
+                ],
+            },
+        }
+        now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        result = phase_gate.classify_pods({"items": [pod]}, {"items": []}, now=now)
+        assert result.transient == []
+        assert result.stale == []
+        assert result.blocking == []
+
+    def test_running_pod_grace_period_not_classified(self):
+        """Running Pod NotReady 3~5분 사이 → grace period로 분류하지 않음."""
+        now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        pod_ts = (now - timedelta(minutes=4)).isoformat()
+        pod = {
+            "metadata": {"name": "grace-pod", "namespace": "workload",
+                         "creationTimestamp": pod_ts},
+            "spec": {"nodeName": "node-1"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{"name": "app", "ready": False}],
+            },
+        }
+        result = phase_gate.classify_pods({"items": [pod]}, {"items": []}, now=now)
+        assert result.transient == []
+        assert result.blocking == []
+
     def test_transient_pending_on_young_node(self):
         now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         node_ts = (now - timedelta(seconds=60)).isoformat()  # 1분 전 생성
@@ -2739,3 +2819,96 @@ class TestPhase7AggregationProperty:
             f"phase2_rc={phase2_rc}, phase3_rc={phase3_rc}, phase4_rc={phase4_rc}, "
             f"insights_rc={insights_rc}: expected {expected}, got {rc}"
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug fix 검증: audit.log append 모드
+# ══════════════════════════════════════════════════════════════
+class TestAuditLogAppend:
+    """audit_flush가 기존 내용을 보존하고 append하는지 검증."""
+
+    def test_audit_flush_appends_not_overwrites(self, tmp_path):
+        """두 번 flush 후 양쪽 기록이 모두 존재해야 함."""
+        import importlib
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'k8s-upgrade-skills', 'scripts'))
+        import lib
+        importlib.reload(lib)
+
+        audit_path = str(tmp_path / "audit.log")
+
+        # 첫 번째 phase
+        lib.reset_gate()
+        lib.audit_init("test-cluster", "1.33", "1.34")
+        lib.audit_write("PHASE2-CP", "PASS", "Control Plane OK")
+        lib.audit_flush(audit_path)
+
+        # 두 번째 phase
+        lib.reset_gate()
+        lib.audit_init("test-cluster", "", "1.34")
+        lib.audit_write("PHASE3-ADDON", "PASS", "Add-ons OK")
+        lib.audit_flush(audit_path)
+
+        content = open(audit_path, encoding="utf-8").read()
+        assert "PHASE2-CP" in content, "Phase 2 기록이 사라짐"
+        assert "PHASE3-ADDON" in content, "Phase 3 기록이 없음"
+        # 두 섹션 모두 존재
+        assert content.count("# Gate:") == 2
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug fix 검증: resource_changes no-op 필터
+# ══════════════════════════════════════════════════════════════
+class TestPhase6NoOpFilter:
+    """terraform plan JSON에서 no-op 항목이 필터링되는지 검증."""
+
+    def test_noop_resources_filtered_as_no_changes(self, tmp_path):
+        """resource_changes가 전부 no-op이면 '변경 없음' 판정."""
+        tf_dir = str(tmp_path / "terraform")
+        os.makedirs(tf_dir, exist_ok=True)
+
+        plan_json = json.dumps({
+            "resource_changes": [
+                {"address": "aws_vpc.main", "type": "aws_vpc",
+                 "change": {"actions": ["no-op"]}},
+                {"address": "aws_subnet.a", "type": "aws_subnet",
+                 "change": {"actions": ["no-op"]}},
+            ]
+        })
+
+        plan_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        show_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=plan_json, stderr="")
+
+        with unittest.mock.patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [plan_result, show_result]
+            audit_log = str(tmp_path / "audit.log")
+            rc = phase_gate.gate_phase6(tf_dir, audit_log)
+
+        assert rc == 0, "no-op만 있으면 변경 없음(exit 0)이어야 함"
+        content = open(audit_log, encoding="utf-8").read()
+        assert "변경 없음" in content
+
+    def test_real_changes_counted_without_noop(self, tmp_path):
+        """no-op과 실제 변경이 섞여 있을 때 no-op은 카운트에서 제외."""
+        tf_dir = str(tmp_path / "terraform")
+        os.makedirs(tf_dir, exist_ok=True)
+
+        plan_json = json.dumps({
+            "resource_changes": [
+                {"address": "aws_vpc.main", "type": "aws_vpc",
+                 "change": {"actions": ["no-op"]}},
+                {"address": "aws_eks.cluster", "type": "aws_eks_cluster",
+                 "change": {"actions": ["update"]}},
+            ]
+        })
+
+        plan_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        show_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=plan_json, stderr="")
+
+        with unittest.mock.patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [plan_result, show_result]
+            audit_log = str(tmp_path / "audit.log")
+            rc = phase_gate.gate_phase6(tf_dir, audit_log)
+
+        assert rc == 0
+        content = open(audit_log, encoding="utf-8").read()
+        assert "1개" in content  # no-op 제외 후 1개만

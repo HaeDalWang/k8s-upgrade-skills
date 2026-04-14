@@ -229,8 +229,49 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
 
     for pod in all_pods:
         phase = pod.get("status", {}).get("phase", "")
-        if phase in ("Running", "Succeeded"):
+        if phase == "Succeeded":
             continue
+
+        # Running Pod: 모든 컨테이너 ready 여부 확인
+        if phase == "Running":
+            container_statuses = pod.get("status", {}).get("containerStatuses", [])
+            init_statuses = pod.get("status", {}).get("initContainerStatuses", [])
+            all_ready = (
+                all(cs.get("ready", False) for cs in container_statuses)
+                and all(
+                    cs.get("ready", False)
+                    or cs.get("state", {}).get("terminated", {}).get("reason") == "Completed"
+                    for cs in init_statuses
+                )
+            ) if container_statuses else True
+            if all_ready:
+                continue
+            # NotReady Running Pod → 시간 기준 분류
+            ns = pod.get("metadata", {}).get("namespace", "?")
+            name = pod.get("metadata", {}).get("name", "?")
+            not_ready = [cs.get("name", "?") for cs in container_statuses if not cs.get("ready", False)]
+            ts_str = pod.get("metadata", {}).get("creationTimestamp", "")
+            if ts_str:
+                try:
+                    pod_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    age_sec = (now - pod_ts).total_seconds()
+                    if age_sec < 180:
+                        result.transient.append({
+                            "ns": ns, "name": name,
+                            "node": pod.get("spec", {}).get("nodeName", ""),
+                            "node_age_sec": int(age_sec),
+                        })
+                        continue
+                    elif age_sec > 300:
+                        result.blocking.append({
+                            "ns": ns, "name": name,
+                            "reason": f"NotReady containers: {','.join(not_ready)}",
+                            "pending_min": round(age_sec / 60, 1),
+                        })
+                        continue
+                except ValueError:
+                    pass
+            continue  # grace period (3~5분)
 
         ns = pod.get("metadata", {}).get("namespace", "?")
         name = pod.get("metadata", {}).get("name", "?")
@@ -476,6 +517,7 @@ def gate_phase6(tf_dir: str, audit_log: str) -> int:
     from pathlib import Path as _Path
     import subprocess as _sp
 
+    tf_dir = str(_Path(tf_dir).resolve())  # 상대→절대 변환
     tfplan_path = _Path(tf_dir) / ".tfplan"
 
     try:
@@ -523,8 +565,11 @@ def gate_phase6(tf_dir: str, audit_log: str) -> int:
             audit_flush(audit_log)
             return 1
 
-        # 3. resource_changes 분석
-        resource_changes = plan_json.get("resource_changes", [])
+        # 3. resource_changes 분석 (no-op/read 제외)
+        resource_changes = [
+            rc for rc in plan_json.get("resource_changes", [])
+            if rc.get("change", {}).get("actions", []) not in (["no-op"], ["read"])
+        ]
 
         if not resource_changes:
             audit_write("PHASE6-TFSYNC", "PASS", "변경 없음 (no changes)")

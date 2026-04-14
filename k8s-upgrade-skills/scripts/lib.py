@@ -147,7 +147,9 @@ def audit_flush(path: str) -> None:
         f"# Gate: {gate}",
         f"# Finished: {now}",
     ])
-    Path(path).write_text("\n".join(_gate.audit_lines) + "\n", encoding="utf-8")
+    new_content = "\n".join(_gate.audit_lines) + "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(new_content)
     _sync_from_gate()
 
 
