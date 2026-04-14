@@ -1,79 +1,75 @@
 ---
 name: terraform-eks-upgrade
 description: >
-  Zero-downtime EKS cluster version upgrade managed by Terraform.
-  Follows AWS best-practice order: Control Plane → Add-ons → Data Plane.
-  Uses recipe.md for cluster_name, current_version, target_version; auto-discovers TF_DIR.
-  Trigger keywords: 'EKS upgrade', 'terraform EKS upgrade', 'EKS 버전 업그레이드', 'EKS 버전 올려줘'
+  Upgrade a Terraform-managed EKS cluster version with zero downtime.
+  Executes phases sequentially: Pre-flight → tfvars Update → Control Plane → Add-ons → Data Plane → Karpenter → Terraform Sync → Final Validation.
+  Each phase boundary is enforced by deterministic gate scripts (exit code based).
+  Trigger keywords: 'EKS upgrade', 'terraform EKS upgrade', 'EKS version upgrade', 'upgrade EKS cluster'
 ---
 
-# Terraform EKS Zero-Downtime Version Upgrade
+# Terraform EKS Version Upgrade
 
-Upgrade a Terraform-managed EKS cluster with **zero downtime**.
-Strictly follow the AWS-recommended order: **Control Plane → Add-ons → Data Plane**.
-Each phase boundary requires validation to pass before proceeding.
+Upgrade a Terraform-managed EKS cluster following a strict phase-gated process.
+Each phase boundary is enforced by a deterministic Python script — the LLM cannot bypass gates.
 
-**MCP**: Use EKS MCP (`get_eks_insights`, `list_k8s_resources`) and Kubernetes MCP from `.mcp.json`.
-If an MCP call fails, fall back to the equivalent AWS CLI / kubectl command shown in each step.
+All scripts are located in `./scripts/` relative to the skill root directory.
 
 ---
 
-## Prerequisites (from recipe.yaml)
+## Prerequisites
 
-Read these values from `recipe.yaml` (or `recipe.md` fallback). If any is empty, do NOT start the upgrade.
-
-**검증**: 파싱 전에 반드시 스키마 검증을 실행한다.
-
-```bash
-python3 scripts/validate_recipe.py recipe.yaml
-```
-
-검증 실패(exit code 1) 시 에러 메시지를 사용자에게 보고하고 진행하지 않는다.
+Recipe values are already validated by the root skill router. Read these values directly:
 
 | Variable | Recipe Field | Purpose |
 |---|---|---|
 | `CLUSTER_NAME` | `cluster_name` | Target for aws eks / kubectl commands |
 | `CURRENT_VERSION` | `current_version` | Pre-flight validation |
 | `TARGET_VERSION` | `target_version` | Upgrade target |
-| `TF_DIR` | (auto-discover) | Directory containing `terraform.tfvars` or `*.tf` files — search the project |
-| `EKS_MODULE` | (auto-discover) | Terraform module name for EKS — inspect `*.tf` files in TF_DIR |
+| `TF_DIR` | (auto-discover) | Directory containing `terraform.tfvars` or `*.tf` files |
+| `EKS_MODULE` | (auto-discover) | Terraform module name for EKS (e.g. `module.eks`) |
 
-> **Version constraint**: EKS supports only minor +1 upgrades. 1.33 → 1.35 is rejected.
+> **Version constraint**: Only minor +1 upgrades are supported. 1.33 → 1.35 is rejected.
 
 ---
 
-## Execution Plan (Declare, Then Execute)
+## Execution Plan
 
-Print this plan to the user before starting, filling in the actual version numbers:
+Print this plan to the user before starting:
 
 ```
-[Phase 0] Pre-flight Validation     → Gate: 17개 규칙 전부 PASS (gate_check.py)
-[Phase 1] Discovery & tfvars Update → Gate: TF_DIR found, version/AMI values updated
-[Phase 2] Control Plane Upgrade     → Gate: cluster status=ACTIVE, version={TARGET_VERSION}
-[Phase 3] Add-on Safety Gate        → Gate: all add-ons status=ACTIVE
-[Phase 4] Data Plane (MNG) Rolling  → Gate: all nodes Ready, version=v{TARGET_VERSION}.x
-[Phase 5] Karpenter Nodes (if any)  → Gate: drift replacement complete, all nodes Ready
-[Phase 6] Full Terraform Sync       → Gate: terraform plan shows no unexpected changes
-[Phase 7] Final Validation          → Gate: cluster healthy, all pods Running
+[Phase 0] Pre-flight Validation     → Gate: gate_check.py (17 rules, exit code)
+[Phase 1] Discovery & tfvars Update → Gate: grep verification
+[Phase 2] Control Plane Upgrade     → Gate: phase_gate.py phase2 (exit code)
+[Phase 3] Add-on Safety Gate        → Gate: phase_gate.py phase3 (exit code)
+[Phase 4] Data Plane (MNG) Rolling  → Gate: phase_gate.py phase4 (exit code)
+[Phase 5] Karpenter Nodes (if any)  → Gate: phase_gate.py phase5 (exit code)
+[Phase 6] Full Terraform Sync       → Gate: phase_gate.py phase6 (exit code)
+[Phase 7] Final Validation          → Gate: phase_gate.py phase7 (exit code)
 ```
 
 Report format and abort conditions: see [reference.md](reference.md).
 
 ---
 
-## Phase 0: Pre-flight Validation (규칙 기반)
+## Exit Code Convention (All Gate Scripts)
 
-**Purpose**: 클러스터 상태, 워크로드 안전성, 용량, 인프라를 체계적으로 검증한다.
+| Exit Code | Meaning | LLM Action |
+|-----------|---------|------------|
+| `0` | PASS — Gate open | Proceed to next phase |
+| `1` | FAIL — Gate blocked | **STOP immediately**. Report audit.log to user. Do NOT proceed |
+| `2` | WARN — User confirmation required | Report audit.log to user. Proceed ONLY with explicit user approval |
+| `127` | CLI tool not found | Report missing tool. STOP |
 
-### 사전 검증 (gate_check.py) — 17개 규칙 전체
+WARN (exit code 2) is a soft-FAIL: the LLM MUST ask the user for approval before proceeding.
 
-**스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
+---
 
-> **경로 주의**: 이 스크립트는 워크스페이스 루트가 아닌 **이 SKILL.md가 위치한 스킬 디렉토리 기준**으로 찾는다.
-> 예: SKILL.md가 `k8s-upgrade-skills/aws/terraform-eks/SKILL.md`라면 스크립트 경로는 `k8s-upgrade-skills/scripts/gate_check.py`
+## Phase 0: Pre-flight Validation
+
+Run the deterministic gate check script. The script validates 17 rules and returns an exit code.
 
 ```bash
-python3 k8s-upgrade-skills/scripts/gate_check.py \
+python3 scripts/gate_check.py \
   --cluster-name "${CLUSTER_NAME}" \
   --current-version "${CURRENT_VERSION}" \
   --target-version "${TARGET_VERSION}" \
@@ -81,86 +77,28 @@ python3 k8s-upgrade-skills/scripts/gate_check.py \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
+Interpret the exit code per the convention table above. On FAIL or WARN, report `audit.log` contents to the user.
 
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | Gate OPEN — 검증 통과 | Phase 1 진행 |
-| `1` | Gate BLOCKED — CRITICAL 실패 존재 | **즉시 중단**. audit.log 내용을 사용자에게 보고. Phase 1 진행 금지 |
-| `2` | Gate WARN — HIGH 경고 존재 | audit.log 내용을 사용자에게 보고. 사용자 승인 시에만 Phase 1 진행 |
+The script checks these 17 rules:
+- COM-001: Cluster health (node Ready, resource pressure)
+- COM-002: Version compatibility (minor +1 constraint)
+- COM-002a: Kubelet version skew
+- COM-003: Add-on compatibility (status + TARGET_VERSION compatibility)
+- WLS-001: PDB blocking risk (disruptionsAllowed == 0)
+- WLS-002: Single replica risk (replicas == 1)
+- WLS-003: PV zone affinity (AZ node count cross-analysis)
+- WLS-004: Local storage pods (hostPath detection)
+- WLS-005: Long-running jobs (age > 30min, restartPolicy=Never)
+- WLS-006: Topology constraint violations (TSC DoNotSchedule, Required Affinity)
+- CAP-001: Node capacity headroom (CPU/MEM utilization)
+- CAP-002: Resource pressure pods (OOMKilled, CrashLoop, ImagePull, Evicted)
+- CAP-003: Surge capacity (subnet available IPs)
+- INF-001: Terraform state drift (requires --tf-dir)
+- INF-002: AMI availability (SSM Parameter Store)
+- INF-003: Karpenter compatibility (conditional on CRD existence)
+- INF-004: Terraform recreate detection (requires --tf-dir)
 
-**스크립트가 검증하는 규칙 (17개)**:
-- COM-001: 클러스터 기본 상태 (노드 Ready, 리소스 압박)
-- COM-002: 버전 호환성 (minor +1 제약)
-- COM-002a: kubelet 버전 skew
-- COM-003: Add-on 호환성 (상태 + TARGET_VERSION 호환 버전)
-- WLS-001: PDB 차단 가능성 (disruptionsAllowed == 0)
-- WLS-002: 단일 레플리카 위험 (replicas == 1 카운트)
-- WLS-003: PV 존 어피니티 (AZ별 노드 수 교차 분석)
-- WLS-004: 로컬 스토리지 Pod (hostPath 감지)
-- WLS-005: 장시간 Job (running time > 30분, restartPolicy=Never)
-- WLS-006: 토폴로지 제약 위반 (TSC DoNotSchedule, Required Affinity)
-- CAP-001: 노드 용량 여유분 (CPU/MEM 사용률)
-- CAP-002: 리소스 압박 Pod (OOMKilled, CrashLoop, ImagePull, Evicted)
-- CAP-003: Surge 용량 (서브넷 가용 IP)
-- INF-001: Terraform 상태 드리프트 (--tf-dir 제공 시)
-- INF-002: AMI 가용성 (SSM Parameter Store 조회)
-- INF-003: Karpenter 호환성 (CRD 존재 시)
-- INF-004: Terraform Recreate 감지 (--tf-dir 제공 시)
-
-**감사 로그 (audit.log)**: 스크립트가 기록 주체. LLM은 읽기만 한다.
-
-### 규칙 카테고리 및 실행 순서
-
-| 단계 | 카테고리 | 규칙 수 | 핵심 검증 내용 |
-|------|----------|---------|---------------|
-| 1 | common | 3개 | 클러스터 상태, 버전 호환성, Add-on 준비 |
-| 2 | workload-safety | 6개 | PDB, 단일 레플리카, PV AZ, 로컬 스토리지, Job, 토폴로지 |
-| 3 | capacity | 3개 | 노드 여유분, 리소스 압박, surge 용량 |
-| 4 | infrastructure | 4개 | Terraform drift, AMI 가용성, Karpenter 호환성, Recreate 감지 |
-
-### 판정 기준
-
-| 조건 | 판정 |
-|------|------|
-| CRITICAL 실패 1개 이상 | ❌ 업그레이드 불가 — 해결 후 재실행 |
-| HIGH 실패 1개 이상, CRITICAL 없음 | ⚠️ 사용자 확인 필요 — 승인 시 진행 |
-| MEDIUM/LOW만 | ✅ 자동 진행 (보고만) |
-| 전부 PASS | ✅ 즉시 진행 |
-
-### 결과 보고
-
-모든 규칙 실행 후 아래 형식으로 요약 테이블을 출력한다:
-
-```
-사전 검증 결과 — {CLUSTER_NAME} ({CURRENT_VERSION} → {TARGET_VERSION})
-
-┌─────────┬──────────────────────────┬──────────┬──────────┐
-│   ID    │          규칙            │  심각도  │   결과   │
-├─────────┼──────────────────────────┼──────────┼──────────┤
-│ COM-001 │ 클러스터 기본 상태       │ CRITICAL │ ✅ PASS  │
-│ COM-002 │ 버전 호환성              │ CRITICAL │ ✅ PASS  │
-│ COM-003 │ Add-on 호환성            │ HIGH     │ ✅ PASS  │
-│ WLS-001 │ PDB 차단 가능성          │ CRITICAL │ ✅ PASS  │
-│ WLS-002 │ 단일 레플리카 위험       │ HIGH     │ ⚠️ WARN  │
-│ WLS-003 │ PV 존 어피니티           │ CRITICAL │ ✅ PASS  │
-│ WLS-004 │ 로컬 스토리지 Pod        │ MEDIUM   │ ✅ PASS  │
-│ WLS-005 │ 장시간 Job               │ MEDIUM   │ ⏭️ SKIP  │
-│ WLS-006 │ 토폴로지 제약            │ HIGH     │ ✅ PASS  │
-│ CAP-001 │ 노드 용량 여유분         │ HIGH     │ ✅ PASS  │
-│ CAP-002 │ 리소스 압박 Pod          │ MEDIUM   │ ✅ PASS  │
-│ CAP-003 │ Surge 용량               │ HIGH     │ ✅ PASS  │
-│ INF-001 │ Terraform 드리프트       │ HIGH     │ ✅ PASS  │
-│ INF-002 │ AMI 가용성               │ CRITICAL │ ✅ PASS  │
-│ INF-003 │ Karpenter 호환성         │ HIGH     │ ✅ PASS  │
-│ INF-004 │ Terraform Recreate 감지  │ CRITICAL │ ✅ PASS  │
-└─────────┴──────────────────────────┴──────────┴──────────┘
-
-CRITICAL 실패: 0개 | HIGH 경고: 1개 | MEDIUM 참고: 0개
-→ 진행 가능 (HIGH 경고 항목 사용자 확인 필요)
-```
-
-> FAIL 시 스크립트 출력에 조치 방안 힌트가 포함됩니다. audit.log와 함께 사용자에게 보고하세요.
+Audit log (`audit.log`) is written by the script. The LLM reads it but does not write to it.
 
 ---
 
@@ -168,23 +106,17 @@ CRITICAL 실패: 0개 | HIGH 경고: 1개 | MEDIUM 참고: 0개
 
 ### 1-1. Auto-discover TF_DIR
 
-Search the project for the directory containing Terraform configuration:
-
 ```bash
 find . -name 'terraform.tfvars' -o -name '*.tf' | head -20
 ```
 
 Identify the directory containing both `terraform.tfvars` and EKS-related `*.tf` files.
-Set `TF_DIR` to this directory path.
 
 ### 1-2. Auto-discover EKS Module Name
 
 ```bash
 grep -rE 'module\s+"[^"]*"' "${TF_DIR}"/*.tf | grep -iE 'eks|cluster'
 ```
-
-The EKS module name (e.g. `module.eks`, `module.eks_cluster`) is needed for targeted plan/apply in Phase 2.
-If multiple candidates exist, inspect the module source to confirm which one wraps `aws_eks_cluster`.
 
 ### 1-3. Read Current Values
 
@@ -194,12 +126,10 @@ grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
 
 ### 1-4. Update Values
 
-Using the edit tool, update these variables in `${TF_DIR}/terraform.tfvars`:
-
+Update these variables in `${TF_DIR}/terraform.tfvars`:
 - `eks_cluster_version` → `"${TARGET_VERSION}"`
-- Each `eks_node_ami_alias_*` variable → latest value from Phase 0-4 lookup
-  - Only update variables that actually exist in the file
-  - If current value already matches the latest for TARGET_VERSION, leave unchanged
+- Each `eks_node_ami_alias_*` → latest value for TARGET_VERSION
+- Only update variables that actually exist in the file
 
 ### 1-5. Verify Update
 
@@ -207,7 +137,7 @@ Using the edit tool, update these variables in `${TF_DIR}/terraform.tfvars`:
 grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
 ```
 
-**Gate**: All values reflect the target version. Report the before/after diff to the user.
+**Gate**: All values reflect the target version. Report before/after diff to user.
 
 ---
 
@@ -219,11 +149,10 @@ grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
 cd "${TF_DIR}" && terraform plan -target=${EKS_MODULE} 2>&1 | tail -60
 ```
 
-**Gate**:
-- `aws_eks_cluster` shows version change `CURRENT_VERSION → TARGET_VERSION` → Expected.
-- `aws_eks_node_group` shows `release_version` change → Expected (rolling update).
-- Any resource with `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**.
-- Exit code 0.
+Review the plan output:
+- `aws_eks_cluster` version change → Expected
+- `aws_eks_node_group` release_version change → Expected (rolling update)
+- Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
 
 ### 2-2. Targeted Apply
 
@@ -231,45 +160,39 @@ cd "${TF_DIR}" && terraform plan -target=${EKS_MODULE} 2>&1 | tail -60
 cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
 ```
 
-This operation typically takes **8–15 minutes** for control plane + node group rolling update.
+This typically takes 8–15 minutes.
 
 ### 2-3. Poll Until Complete
 
-After apply starts, poll the cluster status every 60 seconds:
+Poll every 60 seconds:
 
 ```bash
 aws eks describe-cluster --name "${CLUSTER_NAME}" \
   --query 'cluster.{version:version, status:status}' --output json
 ```
 
-- `status == "UPDATING"` → Wait and re-poll.
-- `status == "ACTIVE"` AND `version == TARGET_VERSION` → Proceed to Phase 3.
-- `status == "FAILED"` → **STOP immediately**. Report the error.
+- `UPDATING` → Wait and re-poll
+- `ACTIVE` + correct version → Run gate script
+- `FAILED` → **STOP immediately**
 
-### 2-4. Gate 검증
-
-**스크립트가 Gate를 판단한다.** 아래 스크립트를 실행하고, exit code로 진행 여부를 결정한다.
+### 2-4. Gate Verification
 
 ```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase2 \
+python3 scripts/phase_gate.py phase2 \
   --cluster-name "${CLUSTER_NAME}" \
   --target-version "${TARGET_VERSION}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
-
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — CP 업그레이드 완료 | Phase 3 진행 |
-| `1` | FAIL — CP 상태 비정상 | **즉시 중단**. audit.log 보고 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+Interpret exit code per convention table. On PASS, proceed to Phase 3.
 
 ---
 
 ## Phase 3: Add-on Safety Gate
 
-### 3-1. Add-on Status Check
+### 3-1. Wait for Add-on Stabilization
+
+After control plane upgrade, add-ons may take time to reconcile. Wait up to 5 minutes, polling every 30 seconds:
 
 ```bash
 aws eks list-addons --cluster-name "${CLUSTER_NAME}" --query 'addons[]' --output text \
@@ -279,38 +202,15 @@ aws eks list-addons --cluster-name "${CLUSTER_NAME}" --query 'addons[]' --output
   done
 ```
 
-**Gate**:
-- All add-ons `status == "ACTIVE"` → Proceed.
-- `UPDATING` → Wait 30s, re-check (up to 5 minutes).
-- `DEGRADED` or `CREATE_FAILED` → **STOP**.
-
-### 3-2. kube-system Pod Health
+### 3-2. Gate Verification
 
 ```bash
-kubectl get pods -n kube-system \
-  -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,STATUS:.status.phase,NODE:.spec.nodeName' \
-  --sort-by='.metadata.name'
-```
-
-**Gate**: All pods `Running` with `READY=True`. If `Pending` or `CrashLoopBackOff` → investigate and report.
-
-### 3-3. Gate 검증
-
-**스크립트가 Gate를 판단한다.**
-
-```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase3 \
+python3 scripts/phase_gate.py phase3 \
   --cluster-name "${CLUSTER_NAME}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
-
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — 모든 Add-on ACTIVE + kube-system Pod 정상 | Phase 4 진행 |
-| `1` | FAIL — Add-on 또는 Pod 비정상 | **즉시 중단**. audit.log 보고 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+Interpret exit code per convention table. On PASS, proceed to Phase 4.
 
 ---
 
@@ -318,309 +218,125 @@ python3 k8s-upgrade-skills/scripts/phase_gate.py phase3 \
 
 The targeted apply in Phase 2 triggers MNG rolling update automatically. Monitor until complete.
 
-### 4-1. Node Version Check
+### 4-1. Monitor Node Rollout
+
+Poll every 60 seconds until all nodes show the target version:
 
 ```bash
 kubectl get nodes \
-  -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,STATUS:.status.conditions[-1].type,READY:.status.conditions[-1].status'
+  -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,READY:.status.conditions[-1].status'
 ```
 
-**Gate**: ALL nodes show `VERSION=v${TARGET_VERSION}.x`. If old-version nodes remain, rolling update is still in progress → re-check after 60s.
-
-### 4-2. FailedEvict Events
+### 4-2. Gate Verification
 
 ```bash
-kubectl get events --all-namespaces --field-selector reason=FailedEvict \
-  --sort-by='.lastTimestamp' | tail -20
-```
-
-**Gate**: No `FailedEvict` events. If present → PDB blocking drain. Report the affected PDB and namespace.
-
-### 4-3. Unhealthy Pods
-
-> `--field-selector status.phase!=Running`은 EKS API 서버에서 지원되지 않는다. 반드시 JSON+Python으로 조회한다.
-
-```bash
-kubectl get pods --all-namespaces -o json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-bad = []
-for p in data['items']:
-    phase = p.get('status', {}).get('phase', '')
-    ns    = p['metadata']['namespace']
-    name  = p['metadata']['name']
-    if phase in ('Running', 'Succeeded'):
-        continue
-    # containerStatuses에서 실제 상태 확인
-    cs = p.get('status', {}).get('containerStatuses', [])
-    reasons = [c.get('state', {}).get('waiting', {}).get('reason', '') for c in cs]
-    bad.append({'ns': ns, 'name': name, 'phase': phase, 'reasons': reasons})
-for b in bad:
-    print(f\"{b['ns']}/{b['name']}: {b['phase']} {b['reasons']}\")
-"
-```
-
-**Gate — 3단계 분류 후 판정**:
-
-| 분류 | 조건 | 처리 |
-|---|---|---|
-| **TRANSIENT** | DaemonSet/init 파드가 업그레이드 중인 노드 위에서 Pending | 60s 대기 후 재확인 (최대 5회) |
-| **STALE** | Error/Failed 상태이지만 **동일 owner의 Running 파드가 존재** | `kubectl delete pod -n <ns> <name>` 로 자동 삭제 후 재확인 |
-| **BLOCKING** | CrashLoopBackOff / ImagePullBackOff / Pending (노드 무관) / STALE 삭제 후에도 잔존 | **STOP** — 상세 내역을 사용자에게 보고 |
-
-**STALE 판별 — 동일 owner 확인**:
-```bash
-# owner 확인 (예: ReplicaSet, DaemonSet)
-kubectl get pod -n <NAMESPACE> <POD_NAME> \
-  -o jsonpath='{.metadata.ownerReferences[0].name} {.metadata.ownerReferences[0].kind}'
-
-# 동일 owner 아래 Running 파드가 1개 이상 존재하면 STALE
-kubectl get pods -n <NAMESPACE> \
-  --field-selector=status.phase=Running \
-  -l <same-label-selector> --no-headers | wc -l
-```
-
-**STALE 자동 삭제**:
-```bash
-kubectl delete pod -n <NAMESPACE> <STALE_POD_NAME>
-```
-
-삭제 후 30s 대기 → 재조회하여 잔존 파드 없음 확인.
-
-### 4-4. Gate 검증
-
-**스크립트가 Gate를 판단한다.** Pod 분류(TRANSIENT/STALE/BLOCKING)는 스크립트가 수행하지만, STALE Pod 삭제는 LLM이 수행한다.
-
-```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase4 \
+python3 scripts/phase_gate.py phase4 \
   --cluster-name "${CLUSTER_NAME}" \
   --target-version "${TARGET_VERSION}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
+Interpret exit code per convention table.
 
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — 모든 노드 Ready + unhealthy Pod 없음 | Phase 5 진행 |
-| `1` | FAIL — 노드 버전 불일치, FailedEvict, 또는 BLOCKING Pod | **즉시 중단**. audit.log 보고 |
-| `2` | WARN — STALE 또는 TRANSIENT Pod 존재 | STALE Pod는 LLM이 `kubectl delete pod`로 삭제 후 재실행. TRANSIENT는 60s 대기 후 재실행 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+**On WARN (exit code 2)**: The script reports STALE or TRANSIENT pods.
+- STALE pods: The LLM deletes them with `kubectl delete pod -n <ns> <name>`, then re-runs the gate script.
+- TRANSIENT pods: Wait 60 seconds, then re-run the gate script.
+- The script classifies and reports only — it does NOT delete pods.
 
-> **STALE Pod 삭제**: 스크립트는 분류/보고만 수행한다. STALE Pod 삭제는 LLM이 `kubectl delete pod -n <ns> <name>` 명령으로 수행한 후, 스크립트를 재실행하여 Gate를 재검증한다.
+On PASS, proceed to Phase 5.
 
 ---
 
 ## Phase 5: Karpenter Nodes (If Applicable)
 
-### 5-0. Detect Karpenter Presence
+### 5-1. Monitor Karpenter Node Replacement
 
-```bash
-kubectl get crd nodeclaims.karpenter.sh 2>/dev/null && echo "KARPENTER_DETECTED" || echo "KARPENTER_NOT_FOUND"
-```
+If Karpenter is present, AMI alias updates in Phase 1 trigger drift detection and automatic node replacement.
 
-- `KARPENTER_NOT_FOUND` → **Skip Phase 5 entirely**. Proceed to Phase 6.
-- `KARPENTER_DETECTED` → Continue with 5-1.
-
-### 5-1. Check Drift Status
+Monitor replacement progress:
 
 ```bash
 kubectl get nodeclaims -o yaml | grep -A5 "type: Drifted"
-```
-
-Or use MCP `list_k8s_resources`: `kind=NodeClaim`, `api_version=karpenter.sh/v1`.
-
-If AMI aliases were updated in Phase 1, Karpenter's drift detection should trigger automatic node replacement.
-
-### 5-2. Monitor Replacement Events
-
-```bash
-kubectl get events -n kube-system --field-selector 'involvedObject.kind=Node' \
-  --sort-by='.lastTimestamp' | grep -E "Disrupting|Terminating|Launching" | tail -20
-```
-
-**Gate**: No PDB violation events during Karpenter disruption.
-
-### 5-3. Verify Karpenter Node Versions
-
-```bash
 kubectl get nodes -l karpenter.sh/nodepool \
   -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,READY:.status.conditions[-1].status'
 ```
 
-**Gate**: All Karpenter-managed nodes at `v${TARGET_VERSION}.x` and `READY=True`.
-
-### 5-4. Gate 검증
-
-**스크립트가 Gate를 판단한다.**
+### 5-2. Gate Verification
 
 ```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase5 \
+python3 scripts/phase_gate.py phase5 \
   --target-version "${TARGET_VERSION}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
-
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — Karpenter 미사용 또는 모든 노드 Ready | Phase 6 진행 |
-| `1` | FAIL — Karpenter 노드 버전 불일치 또는 NotReady | **즉시 중단**. audit.log 보고 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+Interpret exit code per convention table. If Karpenter is not present, the script returns PASS (skip). On PASS, proceed to Phase 6.
 
 ---
 
 ## Phase 6: Full Terraform Sync
 
-After all component upgrades are complete, run a full plan to catch any remaining drift.
+After all component upgrades, run a full plan to catch remaining drift.
 
-### 6-1. Full Plan
+### 6-1. Full Plan and Apply
 
 ```bash
 cd "${TF_DIR}" && terraform plan 2>&1 | tail -40
 ```
 
-**Gate**:
-- `No changes` → Infrastructure fully synced. Skip apply.
-- Non-destructive changes only → Apply.
-- Any `-/+` (destroy-recreate) → **STOP**, report to user.
-
-### 6-2. Full Apply (if needed)
+If non-destructive changes exist, apply:
 
 ```bash
 cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
 ```
 
-**Gate**: Exit code 0.
-
-### 6-3. Gate 검증
-
-**스크립트가 Gate를 판단한다.**
+### 6-2. Gate Verification
 
 ```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase6 \
+python3 scripts/phase_gate.py phase6 \
   --tf-dir "${TF_DIR}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
-
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — 변경 없음 또는 비파괴적 변경만 | Phase 7 진행 (비파괴적 변경 시 apply 실행) |
-| `1` | FAIL — recreate 감지 또는 plan 실패 | **즉시 중단**. 사용자에게 보고 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+Interpret exit code per convention table. The script uses `terraform show -json` for plan analysis (not text parsing). On PASS, proceed to Phase 7.
 
 ---
 
 ## Phase 7: Final Validation
 
-### 7-1. Cluster Version
+### 7-1. Gate Verification
+
+The Phase 7 gate internally calls Phase 2/3/4 verification functions (same process, not subprocess) plus EKS Insights check.
 
 ```bash
-aws eks describe-cluster --name "${CLUSTER_NAME}" \
-  --query 'cluster.{version:version, status:status}' --output json
-```
-
-**Gate**: `version == TARGET_VERSION` AND `status == "ACTIVE"`.
-
-### 7-2. All Nodes
-
-```bash
-kubectl get nodes -o wide --sort-by='.metadata.creationTimestamp'
-```
-
-**Gate**: ALL nodes `Ready`, ALL versions `v${TARGET_VERSION}.x`.
-
-### 7-3. All Pods — Final Health Check
-
-> Phase 4-3과 동일하게 JSON+Python으로 조회한다. `--field-selector status.phase!=Running`은 사용 금지.
-
-```bash
-kubectl get pods --all-namespaces -o json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-bad = []
-for p in data['items']:
-    phase = p.get('status', {}).get('phase', '')
-    ns    = p['metadata']['namespace']
-    name  = p['metadata']['name']
-    if phase in ('Running', 'Succeeded'):
-        continue
-    cs = p.get('status', {}).get('containerStatuses', [])
-    reasons = [c.get('state', {}).get('waiting', {}).get('reason', '') for c in cs]
-    owner = p['metadata'].get('ownerReferences', [{}])[0].get('kind', 'None')
-    bad.append({'ns': ns, 'name': name, 'phase': phase, 'reasons': reasons, 'owner': owner})
-for b in bad:
-    print(f\"{b['ns']}/{b['name']}: {b['phase']} reasons={b['reasons']} owner={b['owner']}\")
-"
-```
-
-**Gate — 3단계 분류 처리 후 완전 클린 상태 확보**:
-
-| 분류 | 조건 | 처리 |
-|---|---|---|
-| **STALE** | Error/Failed 이며 동일 owner 하의 Running 파드 존재 | 즉시 `kubectl delete pod` 후 재확인 |
-| **TRANSIENT** | Pending 이며 노드가 방금 조인 (AGE < 3m) | 90s 대기 후 재확인 (최대 3회) |
-| **BLOCKING** | CrashLoopBackOff / ImagePullBackOff / Pending 장기화 / 삭제 후 재생성 반복 | **STOP** — 사용자에게 상세 보고 후 진행 여부 확인 |
-
-**STALE 정리 절차**:
-```bash
-# 1. 동일 owner 아래 Running 파드가 있는지 확인
-kubectl get pods -n <NAMESPACE> -o wide | grep <OWNER_NAME>
-
-# 2. STALE 파드 삭제
-kubectl delete pod -n <NAMESPACE> <STALE_POD_NAME>
-
-# 3. 30s 대기 후 재조회
-sleep 30
-kubectl get pods -n <NAMESPACE> | grep -v Running | grep -v Completed
-```
-
-**최종 Gate**: 위 절차 완료 후 unhealthy 파드 **0개**. BLOCKING 분류 파드가 1개라도 있으면 완료 보고서를 발행하지 않고 사용자에게 먼저 보고한다.
-
-### 7-4. EKS Insights (Post-upgrade)
-
-Use MCP `get_eks_insights`: `category=UPGRADE_READINESS`.
-
-**Gate**: All insights `PASSING`.
-
-### 7-5. Gate 검증
-
-**스크립트가 Gate를 판단한다.** Phase 2/3/4 검증을 내부적으로 재실행하고 Insights를 확인한다. STALE Pod 삭제는 LLM이 수행한다.
-
-```bash
-python3 k8s-upgrade-skills/scripts/phase_gate.py phase7 \
+python3 scripts/phase_gate.py phase7 \
   --cluster-name "${CLUSTER_NAME}" \
   --target-version "${TARGET_VERSION}" \
   --audit-log audit.log
 ```
 
-**Exit code 해석**:
+Interpret exit code per convention table.
 
-| Exit Code | 의미 | 행동 |
-|-----------|------|------|
-| `0` | PASS — 전체 검증 통과 | 완료 보고서 발행 |
-| `1` | FAIL — 하위 검증 실패 또는 Insight 비정상 | **즉시 중단**. audit.log 보고. 완료 보고서 발행 금지 |
-| `2` | WARN — STALE/TRANSIENT Pod 존재 | STALE Pod는 LLM이 삭제 후 재실행. 사용자 승인 시에만 완료 보고서 발행 |
-| `127` | CLI 도구 미존재 | 설치 안내 후 중단 |
+**On WARN (exit code 2)**: Same STALE/TRANSIENT pod handling as Phase 4 — LLM deletes STALE pods, waits for TRANSIENT, then re-runs.
 
-> **STALE Pod 삭제**: Phase 4와 동일. 스크립트는 분류/보고만 수행하고, LLM이 삭제 후 재실행한다.
+**On PASS**: Proceed to generate the completion report.
 
-### 7-6. Generate Completion Report
+### 7-2. Generate Completion Report
 
-Produce the final report using the template in [reference.md](reference.md), in the language specified by `output_language` in recipe.md.
+Produce the final report using the template in [reference.md](reference.md), in the language specified by `output_language` in the recipe file.
+
+> The completion report MUST NOT be issued until Phase 7 gate returns exit code 0.
 
 ---
 
 ## Safety Rules (Non-negotiable)
 
 1. **No version skipping**: Reject 1.33 → 1.35 direct upgrade.
-2. **Control Plane first**: Data Plane must never exceed Control Plane version.
+2. **Control Plane first**: Data Plane version must NEVER exceed Control Plane version.
 3. **PDB respect**: If `FailedEvict` occurs, never force-proceed. Report and wait.
-4. **No phase reversal**: Phases execute in strict order 0 → 7.
+4. **No phase reversal**: Phases execute in strict order 0 → 7. No skipping, no reordering.
 5. **No apply without plan**: Every `terraform apply` must be preceded by `terraform plan` review.
 6. **Abort on unexpected destroy**: If plan shows unexpected resource destruction, STOP immediately.
-7. **No field-selector for pod phase**: `--field-selector status.phase!=Running` is not supported on EKS API server. Always use `kubectl get pods -o json | python3 -c "..."` for phase-based filtering.
-8. **No silent pod ignore**: Never mark a phase Gate as passed while unhealthy pods exist. Classify every non-Running pod (TRANSIENT / STALE / BLOCKING) and resolve before proceeding. STALE pods must be deleted; BLOCKING pods require user confirmation.
-9. **Completion report only after clean state**: The final report must not be issued until Phase 7-3 Gate confirms zero unhealthy pods.
+7. **No field-selector for pod phase**: `--field-selector status.phase!=Running` is not supported on EKS API server. Always use JSON + Python for phase-based filtering.
+8. **No silent pod ignore**: Never mark a phase Gate as passed while unhealthy pods exist. Classify every non-Running pod (TRANSIENT / STALE / BLOCKING) and resolve before proceeding.
+9. **Completion report only after clean state**: The final report must not be issued until Phase 7 gate confirms zero unhealthy pods.
+10. **Gate scripts are authoritative**: The LLM MUST NOT override or reinterpret gate script exit codes. Exit code 1 = STOP. No exceptions.
