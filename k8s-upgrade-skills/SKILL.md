@@ -10,7 +10,7 @@ description: >
 # Kubernetes Version Upgrade — Root Router
 
 This skill upgrades Kubernetes clusters across multiple infrastructure types with **zero-downtime** and **workload protection**.
-It reads user requirements from `recipe.md`, validates them, and routes to exactly ONE platform-specific sub-skill.
+It reads user requirements from `recipe.yaml`, validates them, and routes to exactly ONE platform-specific sub-skill.
 
 ---
 

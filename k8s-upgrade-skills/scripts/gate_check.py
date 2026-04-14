@@ -176,23 +176,27 @@ def check_com001(cluster_name: str) -> None:
 
 # ══════════════════════════════════════════════════════════════
 # COM-002a: kubelet 버전 skew 검증 (CRITICAL)
+# https://kubernetes.io/releases/version-skew-policy/
+# K8s 1.28+: kubelet skew 허용 n-3, 미만: n-2
 # ══════════════════════════════════════════════════════════════
 def check_com002a(target_version: str) -> None:
     targ_minor = int(target_version.split(".")[1])
+    # K8s 1.28부터 kubelet skew 정책이 n-3으로 완화됨
+    max_skew = 3 if targ_minor >= 28 else 2
     nodes = kubectl_json("nodes", all_ns=False)
     violations = 0
     for node in nodes.get("items", []):
         ver = node["status"]["nodeInfo"]["kubeletVersion"]
         node_minor = int(ver.split(".")[1])
-        if targ_minor - node_minor > 2:
+        if targ_minor - node_minor > max_skew:
             violations += 1
 
     if violations > 0:
         record("COM-002a", "CRITICAL", "FAIL",
-               f"kubelet skew > 2 노드 {violations}개 → 해당 노드의 kubelet을 먼저 업그레이드하세요")
+               f"kubelet skew > {max_skew} 노드 {violations}개 → 해당 노드의 kubelet을 먼저 업그레이드하세요")
     else:
         record("COM-002a", "CRITICAL", "PASS",
-               "kubelet skew 정상 (모두 ≤ 2)")
+               f"kubelet skew 정상 (모두 ≤ {max_skew})")
 
 
 # ══════════════════════════════════════════════════════════════
