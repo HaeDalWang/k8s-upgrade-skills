@@ -561,21 +561,27 @@ def gate_phase7(cluster_name: str, target_version: str, audit_log: str) -> int:
     """Phase 7: phase2+3+4 함수 호출 + Insights. 반환: exit code (0/1/2)."""
     import os
     import tempfile
+    from pathlib import Path as _Path
 
     sub_results = {}
 
-    # 1. Call sub-gates first (each calls reset_gate internally, writes to temp audit)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        sub_audit = os.path.join(tmpdir, "sub_audit.log")
-        sub_results["phase2"] = gate_phase2(cluster_name, target_version, sub_audit)
+    # 1. Call sub-gates — each writes to temp audit, then append to main audit
+    def _run_sub_gate(name, gate_fn, *args):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub_audit = os.path.join(tmpdir, "sub_audit.log")
+            rc = gate_fn(*args, sub_audit)
+            # Append sub-gate audit to main audit log
+            sub_path = _Path(sub_audit)
+            if sub_path.exists():
+                main_path = _Path(audit_log)
+                with main_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\n# --- Phase 7: sub-gate {name} ---\n")
+                    f.write(sub_path.read_text(encoding="utf-8"))
+            return rc
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        sub_audit = os.path.join(tmpdir, "sub_audit.log")
-        sub_results["phase3"] = gate_phase3(cluster_name, sub_audit)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        sub_audit = os.path.join(tmpdir, "sub_audit.log")
-        sub_results["phase4"] = gate_phase4(cluster_name, target_version, sub_audit)
+    sub_results["phase2"] = _run_sub_gate("phase2", gate_phase2, cluster_name, target_version)
+    sub_results["phase3"] = _run_sub_gate("phase3", gate_phase3, cluster_name)
+    sub_results["phase4"] = _run_sub_gate("phase4", gate_phase4, cluster_name, target_version)
 
     # 2. Now init our own audit session (sub-gates cleared state via reset_gate)
     reset_gate()

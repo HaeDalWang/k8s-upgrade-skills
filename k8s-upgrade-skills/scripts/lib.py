@@ -230,7 +230,7 @@ def _parse_mem(s: str) -> int:
     if s.endswith("Gi"):
         return int(float(s[:-2]) * 1024)
     if s.endswith("M"):
-        return int(s[:-1])
+        return int(s[:-1]) * 1_000_000 // (1024 * 1024)
     try:
         return int(s) // (1024 * 1024)
     except ValueError:
