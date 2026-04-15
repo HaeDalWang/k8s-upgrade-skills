@@ -126,6 +126,33 @@ notes: ""                 # 특이사항
 | Phase 0 (사전 검증) | EKS/SSM/EC2 읽기 전용 | `k8s-upgrade-preflight` | 안전, 읽기만 |
 | Phase 1~7 (실행) | + EKS 업데이트 + Terraform State | `k8s-upgrade-execution` | 쓰기 포함 |
 
+### Claude Code 권한 설정 (settings.local.json)
+
+이 스킬은 아래 명령어를 자동 실행합니다. `.claude/settings.local.json`에 미리 허용해두면 매번 승인 없이 진행됩니다.
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 k8s-upgrade-skills/scripts/validate_recipe.py:*)",
+      "Bash(python3 k8s-upgrade-skills/scripts/gate_check.py:*)",
+      "Bash(python3 k8s-upgrade-skills/scripts/phase_gate.py:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl patch:*)",
+      "Bash(kubectl scale:*)",
+      "Bash(kubectl delete:*)",
+      "Bash(aws eks:*)",
+      "Bash(aws ssm:*)",
+      "Bash(terraform plan:*)",
+      "Bash(terraform apply:*)"
+    ]
+  }
+}
+```
+
+> `kubectl patch/scale/delete`는 Phase 0 CRITICAL 해소 조치(PDB 수정, padding Pod 삭제 등)에 사용됩니다. 읽기 전용 사전 검증만 원한다면 해당 항목을 제외하세요.
+
 ## 업그레이드 워크플로우
 
 ```mermaid
