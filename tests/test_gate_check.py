@@ -1476,3 +1476,64 @@ class TestCliFailureGracefulProperty:
         assert gate_check.total_pass >= 1, (
             f"Subsequent check_inf001(0, ...) should PASS after {fn_name} failure"
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: _parse_cpu / _parse_mem None 입력
+# ══════════════════════════════════════════════════════════════
+class TestParseResourcesDefensive:
+    """_parse_cpu/_parse_mem이 None 및 비정상 입력에서 크래시하지 않는지 검증."""
+
+    def test_parse_cpu_none_returns_zero(self):
+        assert gate_check._parse_cpu(None) == 0
+
+    def test_parse_cpu_empty_returns_zero(self):
+        assert gate_check._parse_cpu("") == 0
+
+    def test_parse_mem_none_returns_zero(self):
+        assert gate_check._parse_mem(None) == 0
+
+    def test_parse_mem_empty_returns_zero(self):
+        assert gate_check._parse_mem("") == 0
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: check_com002 버전 형식 오류
+# ══════════════════════════════════════════════════════════════
+class TestCom002MalformedVersion:
+    """check_com002가 비정상 버전 문자열에서 FAIL을 반환하는지 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    @pytest.mark.parametrize("current,target", [
+        ("1", "1.34"),       # current에 minor 없음
+        ("1.33", "1"),       # target에 minor 없음
+        ("", "1.34"),        # current 빈 문자열
+        ("1.33", ""),        # target 빈 문자열
+    ])
+    def test_malformed_version_records_fail(self, current, target):
+        gate_check.check_com002(current, target)
+        assert gate_check.critical_fail >= 1, (
+            f"check_com002('{current}', '{target}') should record CRITICAL FAIL"
+        )
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: check_com002a kubeletVersion 누락
+# ══════════════════════════════════════════════════════════════
+class TestCom002aDefensive:
+    """check_com002a가 kubeletVersion 누락 노드에서 크래시하지 않는지 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    def test_node_missing_kubelet_version_skipped(self):
+        nodes_json = {"items": [
+            {"metadata": {"name": "node-1"}, "status": {}},  # nodeInfo 없음
+            {"metadata": {"name": "node-2"}, "status": {"nodeInfo": {}}},  # kubeletVersion 없음
+        ]}
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=nodes_json):
+            gate_check.check_com002a("1.34")
+        # 크래시 없이 PASS (빈 버전은 skip)
+        assert gate_check.critical_fail == 0
