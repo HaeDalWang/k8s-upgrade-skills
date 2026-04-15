@@ -358,12 +358,21 @@ def gate_phase4(cluster_name: str, target_version: str, audit_log: str) -> int:
         audit_flush(audit_log)
         return 1
 
+    if not target_version:
+        audit_write("PHASE4-DATAPLANE", "FAIL", "target_version이 비어있음")
+        print(f"{RED}❌ PHASE4-DATAPLANE FAIL{NC}  target_version이 비어있음")
+        audit_flush(audit_log)
+        return 1
     version_pattern = re.compile(rf"v{re.escape(target_version)}\.")
     bad_nodes = []
     for node in nodes:
         name = node.get("metadata", {}).get("name", "?")
         kubelet_ver = node.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
-        conditions = {c["type"]: c["status"] for c in node.get("status", {}).get("conditions", [])}
+        conditions = {
+            c.get("type", ""): c.get("status", "")
+            for c in node.get("status", {}).get("conditions", [])
+            if c.get("type")
+        }
         ready = conditions.get("Ready", "False")
 
         if not version_pattern.match(kubelet_ver):
@@ -483,12 +492,21 @@ def gate_phase5(target_version: str, audit_log: str) -> int:
         audit_flush(audit_log)
         return 0
 
+    if not target_version:
+        audit_write("PHASE5-KARPENTER", "FAIL", "target_version이 비어있음")
+        print(f"{RED}❌ PHASE5-KARPENTER FAIL{NC}  target_version이 비어있음")
+        audit_flush(audit_log)
+        return 1
     version_pattern = re.compile(rf"v{re.escape(target_version)}\.")
     bad_nodes = []
     for node in nodes:
         name = node.get("metadata", {}).get("name", "?")
         kubelet_ver = node.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
-        conditions = {c["type"]: c["status"] for c in node.get("status", {}).get("conditions", [])}
+        conditions = {
+            c.get("type", ""): c.get("status", "")
+            for c in node.get("status", {}).get("conditions", [])
+            if c.get("type")
+        }
         ready = conditions.get("Ready", "False")
 
         if not version_pattern.match(kubelet_ver):

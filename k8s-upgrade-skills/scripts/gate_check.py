@@ -107,8 +107,14 @@ DESTROY_PATTERN = re.compile(r"Plan:.*\d+\s+to\s+destroy")
 # COM-002: 버전 호환성 검증 (CRITICAL)
 # ══════════════════════════════════════════════════════════════
 def check_com002(current_version: str, target_version: str) -> None:
-    curr_minor = int(current_version.split(".")[1])
-    targ_minor = int(target_version.split(".")[1])
+    curr_parts = current_version.split(".")
+    targ_parts = target_version.split(".")
+    if len(curr_parts) < 2 or len(targ_parts) < 2:
+        record("COM-002", "CRITICAL", "FAIL",
+               f"버전 형식 오류 ({current_version} → {target_version}) → 'X.Y' 형식이어야 합니다")
+        return
+    curr_minor = int(curr_parts[1])
+    targ_minor = int(targ_parts[1])
     gap = targ_minor - curr_minor
 
     if gap == 1:
@@ -180,14 +186,24 @@ def check_com001(cluster_name: str) -> None:
 # K8s 1.28+: kubelet skew 허용 n-3, 미만: n-2
 # ══════════════════════════════════════════════════════════════
 def check_com002a(target_version: str) -> None:
-    targ_minor = int(target_version.split(".")[1])
+    targ_parts = target_version.split(".")
+    if len(targ_parts) < 2:
+        record("COM-002a", "CRITICAL", "FAIL",
+               f"버전 형식 오류 ({target_version}) → 'X.Y' 형식이어야 합니다")
+        return
+    targ_minor = int(targ_parts[1])
     # K8s 1.28부터 kubelet skew 정책이 n-3으로 완화됨
     max_skew = 3 if targ_minor >= 28 else 2
     nodes = kubectl_json("nodes", all_ns=False)
     violations = 0
     for node in nodes.get("items", []):
-        ver = node["status"]["nodeInfo"]["kubeletVersion"]
-        node_minor = int(ver.split(".")[1])
+        ver = node.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
+        if not ver:
+            continue
+        ver_parts = ver.split(".")
+        if len(ver_parts) < 2:
+            continue
+        node_minor = int(ver_parts[1])
         if targ_minor - node_minor > max_skew:
             violations += 1
 
