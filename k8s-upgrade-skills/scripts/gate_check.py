@@ -150,7 +150,7 @@ def check_com001(cluster_name: str) -> None:
 
     # 2. 노드 상태
     nodes = kubectl_json("nodes", all_ns=False)
-    if not nodes:
+    if nodes is None:
         record("COM-001", "CRITICAL", "FAIL", "kubectl 연결 실패")
         return
 
@@ -195,6 +195,9 @@ def check_com002a(target_version: str) -> None:
     # K8s 1.28부터 kubelet skew 정책이 n-3으로 완화됨
     max_skew = 3 if targ_minor >= 28 else 2
     nodes = kubectl_json("nodes", all_ns=False)
+    if nodes is None:
+        record("COM-002a", "CRITICAL", "FAIL", "kubectl 연결 실패 — kubelet skew 검증 불가")
+        return
     violations = 0
     for node in nodes.get("items", []):
         ver = node.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
@@ -296,6 +299,9 @@ def check_com003(cluster_name: str, target_version: str) -> None:
 # ══════════════════════════════════════════════════════════════
 def check_wls001() -> None:
     data = kubectl_json("pdb")
+    if data is None:
+        record("WLS-001", "CRITICAL", "FAIL", "kubectl 연결 실패 — PDB 검증 불가")
+        return
     blocked = 0
     for pdb in data.get("items", []):
         allowed = pdb.get("status", {}).get("disruptionsAllowed", 1)
@@ -325,6 +331,9 @@ def check_wls002() -> None:
     count = 0
     for kind in ("deployments", "statefulsets"):
         data = kubectl_json(kind)
+        if data is None:
+            record("WLS-002", "HIGH", "FAIL", f"kubectl 연결 실패 — {kind} 검증 불가")
+            return
         for item in data.get("items", []):
             ns = item["metadata"]["namespace"]
             if ns in SYSTEM_NS:
@@ -351,8 +360,8 @@ def check_wls003() -> None:
     pvs = kubectl_json("pv", all_ns=False)
     nodes = kubectl_json("nodes", all_ns=False)
 
-    if not pvs or not nodes:
-        record("WLS-003", "CRITICAL", "PASS", "PV 또는 노드 조회 불가 — 건너뜀")
+    if pvs is None or nodes is None:
+        record("WLS-003", "CRITICAL", "FAIL", "kubectl 연결 실패 — PV/노드 검증 불가")
         return
 
     # AZ별 노드 수
@@ -399,8 +408,8 @@ def check_wls003() -> None:
 # ══════════════════════════════════════════════════════════════
 def check_wls004() -> None:
     pods = kubectl_json("pods", timeout=60)
-    if not pods:
-        record("WLS-004", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+    if pods is None:
+        record("WLS-004", "MEDIUM", "FAIL", "kubectl 연결 실패 — hostPath Pod 검증 불가")
         return
 
     hostpath_count = 0
@@ -432,8 +441,8 @@ def check_wls004() -> None:
 # ══════════════════════════════════════════════════════════════
 def check_wls005() -> None:
     pods = kubectl_json("pods", timeout=60)
-    if not pods:
-        record("WLS-005", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+    if pods is None:
+        record("WLS-005", "MEDIUM", "FAIL", "kubectl 연결 실패 — 장시간 Job 검증 불가")
         return
 
     now = datetime.now(timezone.utc)
@@ -481,6 +490,9 @@ def check_wls006() -> None:
 
     for kind in ("deployments", "statefulsets"):
         data = kubectl_json(kind)
+        if data is None:
+            record("WLS-006", "HIGH", "FAIL", f"kubectl 연결 실패 — {kind} 검증 불가")
+            return
         for item in data.get("items", []):
             ns = item["metadata"]["namespace"]
             if ns in SYSTEM_NS:
@@ -510,6 +522,9 @@ def check_wls006() -> None:
 
     # AZ별 노드 수 확인
     nodes = kubectl_json("nodes", all_ns=False)
+    if nodes is None:
+        record("WLS-006", "HIGH", "FAIL", "kubectl 연결 실패 — 노드 AZ 검증 불가")
+        return
     az_count: Counter = Counter()
     for n in nodes.get("items", []):
         az = n["metadata"].get("labels", {}).get(
@@ -592,8 +607,8 @@ def check_cap001() -> None:
     nodes = kubectl_json("nodes", all_ns=False)
     pods = kubectl_json("pods", timeout=60)
 
-    if not nodes or not pods:
-        record("CAP-001", "HIGH", "PASS", "노드/Pod 조회 불가 — 건너뜀")
+    if nodes is None or pods is None:
+        record("CAP-001", "HIGH", "FAIL", "kubectl 연결 실패 — 노드 용량 검증 불가")
         return
 
     # 노드 allocatable
@@ -647,8 +662,8 @@ def check_cap001() -> None:
 def check_cap002() -> None:
     """CAP-002: OOMKilled, CrashLoopBackOff, ImagePullBackOff, Evicted Pod 감지."""
     pods = kubectl_json("pods", timeout=60)
-    if not pods:
-        record("CAP-002", "MEDIUM", "PASS", "Pod 조회 불가 — 건너뜀")
+    if pods is None:
+        record("CAP-002", "MEDIUM", "FAIL", "kubectl 연결 실패 — 리소스 압박 Pod 검증 불가")
         return
 
     problem_pods: list[str] = []
