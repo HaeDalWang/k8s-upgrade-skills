@@ -1537,3 +1537,64 @@ class TestCom002aDefensive:
             gate_check.check_com002a("1.34")
         # 크래시 없이 PASS (빈 버전은 skip)
         assert gate_check.critical_fail == 0
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: kubectl_json None 반환 시 FAIL 기록
+# ══════════════════════════════════════════════════════════════
+class TestKubectlJsonNoneHandling:
+    """kubectl_json()이 None을 반환할 때 각 check 함수가 FAIL을 기록하는지 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    def test_check_com001_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None), \
+             unittest.mock.patch("gate_check.run_cmd") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout='{"cluster": {"status": "ACTIVE", "version": "1.33"}}',
+                stderr=""
+            )
+            gate_check.check_com001("test-cluster")
+        assert gate_check.critical_fail >= 1
+
+    def test_check_wls001_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_wls001()
+        assert gate_check.critical_fail >= 1
+
+    def test_check_wls002_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_wls002()
+        assert gate_check.high_warn >= 1
+
+    def test_check_wls003_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_wls003()
+        assert gate_check.critical_fail >= 1
+
+    def test_check_wls004_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_wls004()
+        assert gate_check.medium_info >= 1
+
+    def test_check_wls005_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_wls005()
+        assert gate_check.medium_info >= 1
+
+    def test_check_cap001_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_cap001()
+        assert gate_check.high_warn >= 1
+
+    def test_check_cap002_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_cap002()
+        assert gate_check.medium_info >= 1
+
+    def test_check_com002a_kubectl_fail_records_fail(self):
+        with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
+            gate_check.check_com002a("1.34")
+        assert gate_check.critical_fail >= 1
