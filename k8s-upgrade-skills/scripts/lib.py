@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # ══════════════════════════════════════════════════════════════
 # 색상 상수 (터미널)
@@ -192,18 +193,18 @@ def run_cmd(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr=str(e))
 
 
-def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 30) -> dict:
-    """kubectl get <resource> -o json 실행 후 dict 반환."""
+def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 30) -> Optional[dict]:
+    """kubectl get <resource> -o json 실행 후 dict 반환. 실패 시 None 반환."""
     cmd = ["kubectl", "get", resource, "-o", "json"]
     if all_ns:
         cmd.insert(2, "-A")
     r = run_cmd(cmd, timeout=timeout)
     if r.returncode != 0:
-        return {}
+        return None
     try:
         return json.loads(r.stdout)
     except json.JSONDecodeError:
-        return {}
+        return None
 
 
 # ══════════════════════════════════════════════════════════════

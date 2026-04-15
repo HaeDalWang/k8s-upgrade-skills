@@ -98,7 +98,7 @@ The script checks these 17 rules:
 - INF-003: Karpenter compatibility (conditional on CRD existence)
 - INF-004: Terraform recreate detection (requires --tf-dir)
 
-Audit log (`audit.log`) is written by the script. The LLM reads it but does not write to it.
+Audit log (`audit.log`) is written by the script in **append mode** — each phase appends its records without overwriting previous phases. The LLM reads it but does not write to it.
 
 ---
 
