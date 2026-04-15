@@ -2912,3 +2912,68 @@ class TestPhase6NoOpFilter:
         assert rc == 0
         content = open(audit_log, encoding="utf-8").read()
         assert "1개" in content  # no-op 제외 후 1개만
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: phase4/5 빈 target_version
+# ══════════════════════════════════════════════════════════════
+class TestPhase4Phase5EmptyTargetVersion:
+    """target_version이 빈 문자열일 때 FAIL을 반환하는지 검증."""
+
+    def test_phase4_empty_target_version_returns_fail(self, tmp_path):
+        nodes_json = json.dumps({"items": [
+            {"metadata": {"name": "node-1"},
+             "status": {"nodeInfo": {"kubeletVersion": "v1.34.0"},
+                        "conditions": [{"type": "Ready", "status": "True"}]}}
+        ]})
+        r = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout=nodes_json, stderr="")
+        with unittest.mock.patch("phase_gate.run_cmd", return_value=r):
+            audit_log = str(tmp_path / "audit.log")
+            rc = phase_gate.gate_phase4("my-cluster", "", audit_log)
+        assert rc == 1
+
+    def test_phase5_empty_target_version_returns_fail(self, tmp_path):
+        crd_result = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        nodes_json = json.dumps({"items": [
+            {"metadata": {"name": "karp-node-1"},
+             "status": {"nodeInfo": {"kubeletVersion": "v1.34.0"},
+                        "conditions": [{"type": "Ready", "status": "True"}]}}
+        ]})
+        nodes_result = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout=nodes_json, stderr="")
+
+        def mock_run_cmd(cmd, **kwargs):
+            if "nodeclaims.karpenter.sh" in cmd:
+                return crd_result
+            return nodes_result
+
+        with unittest.mock.patch("phase_gate.run_cmd", side_effect=mock_run_cmd):
+            audit_log = str(tmp_path / "audit.log")
+            rc = phase_gate.gate_phase5("", audit_log)
+        assert rc == 1
+
+
+# ══════════════════════════════════════════════════════════════
+# 방어 코드 검증: condition dict 불완전한 항목
+# ══════════════════════════════════════════════════════════════
+class TestNodeConditionDefensive:
+    """노드 condition에 type/status 키가 없어도 크래시하지 않는지 검증."""
+
+    def test_phase4_node_missing_condition_type_no_crash(self, tmp_path):
+        nodes_json = json.dumps({"items": [
+            {"metadata": {"name": "node-1"},
+             "status": {
+                 "nodeInfo": {"kubeletVersion": "v1.34.0"},
+                 "conditions": [
+                     {},                          # type/status 모두 없음
+                     {"type": "Ready"},           # status 없음
+                     {"status": "True"},          # type 없음
+                     {"type": "Ready", "status": "True"},  # 정상
+                 ]
+             }}
+        ]})
+        r = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout=nodes_json, stderr="")
+        with unittest.mock.patch("phase_gate.run_cmd", return_value=r):
+            audit_log = str(tmp_path / "audit.log")
+            # 크래시 없이 실행되어야 함
+            rc = phase_gate.gate_phase4("my-cluster", "1.34", audit_log)
+        assert rc in (0, 1, 2)  # 어떤 결과든 크래시 없이 반환

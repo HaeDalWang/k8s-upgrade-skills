@@ -211,7 +211,7 @@ def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 30) -> dict:
 # ══════════════════════════════════════════════════════════════
 def _parse_cpu(s: str) -> int:
     """CPU 문자열 → 밀리코어."""
-    if not s:
+    if s is None or not s:
         return 0
     if s.endswith("m"):
         return int(s[:-1])
@@ -223,7 +223,7 @@ def _parse_cpu(s: str) -> int:
 
 def _parse_mem(s: str) -> int:
     """메모리 문자열 → MiB."""
-    if not s:
+    if s is None or not s:
         return 0
     if s.endswith("Ki"):
         return int(s[:-2]) // 1024
