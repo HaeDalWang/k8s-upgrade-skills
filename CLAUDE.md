@@ -27,6 +27,9 @@ python3 k8s-upgrade-skills/scripts/phase_gate.py phase4 \
   --target-version 1.34 \
   --audit-log audit.log
 
+# recipe 검증
+python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.yaml
+
 # 스킬 설치
 ./install.sh --tool claude
 ./install.sh --status
@@ -73,6 +76,7 @@ docs/
 ```
 gate_check.py  ──imports──▶  lib.py
 phase_gate.py  ──imports──▶  lib.py
+validate_recipe.py            (stdlib only, 독립)
 ```
 
 `lib.py`의 핵심 함수:
@@ -80,6 +84,37 @@ phase_gate.py  ──imports──▶  lib.py
 - `audit_flush(path)`: `_gate.audit_lines`를 append 모드로 파일에 기록
 - `record(rule_id, severity, status, message)`: 글로벌 `_gate` 상태에 결과 누적
 - `reset_gate()`: 테스트 간 글로벌 상태 초기화 (테스트 fixture에서 `autouse=True`)
+
+`lib.py`의 주요 상수:
+- `SYSTEM_NS`: WLS-002/004/005/006 검증에서 제외되는 시스템 네임스페이스 집합 (`kube-system`, `karpenter` 등)
+- `DATA_PLANE_RESOURCES`: INF-004 recreate 감지 대상 Terraform 리소스 타입 (`aws_eks_node_group` 등)
+- `ADDON_BAD_STATES`: COM-003 비정상 Add-on 상태 (`DEGRADED`, `CREATE_FAILED`)
+
+### gate_check.py 규칙 함수 구조
+
+17개 규칙은 카테고리별 함수로 구현되어 있다:
+
+| 카테고리 | 함수 | 규칙 ID |
+|---------|------|---------|
+| common | `check_com001` ~ `check_com003` | COM-001, COM-002, COM-002a, COM-003 |
+| workload-safety | `check_wls001` ~ `check_wls006` | WLS-001 ~ WLS-006 |
+| capacity | `check_cap001` ~ `check_cap003` | CAP-001 ~ CAP-003 |
+| infrastructure | `check_inf001` ~ `check_inf004` | INF-001 ~ INF-004 |
+
+`main()`의 `ALL_RULES` 리스트가 실행 순서를 결정한다. `--tf-dir` 미제공 시 INF-001/INF-004는 SKIP으로 기록된다.
+
+### phase_gate.py Gate 함수 구조
+
+각 서브커맨드는 독립 함수로 구현되어 있다:
+
+| 함수 | 필수 인자 | 핵심 검증 |
+|------|---------|---------|
+| `gate_phase2` | cluster-name, target-version | CP status=ACTIVE + 버전 일치 |
+| `gate_phase3` | cluster-name | Add-on 전체 ACTIVE + kube-system Pod |
+| `gate_phase4` | cluster-name, target-version | 노드 버전 + `classify_pods()` |
+| `gate_phase5` | target-version | Karpenter NodeClaim 버전 (CRD 없으면 SKIP) |
+| `gate_phase6` | tf-dir | `terraform show -json` no-op/read 제외 후 변경 카운트 |
+| `gate_phase7` | cluster-name, target-version | phase2+3+4 재검증 + EKS Insights |
 
 ### Pod 분류 로직 (classify_pods)
 
