@@ -167,6 +167,39 @@ aws eks update-nodegroup-config \
   --scaling-config desiredSize=<CURRENT+1>
 ```
 
+### Running 상태이지만 컨테이너 NotReady
+
+증상: Phase 4/7 Gate가 BLOCKING Pod를 보고하는데 `kubectl get pods`에서는 Running으로 표시됨
+
+```bash
+# 1. 컨테이너 레벨 Ready 상태 확인
+kubectl get pods -A -o json | python3 -c "
+import json, sys
+for pod in json.load(sys.stdin)['items']:
+    if pod['status'].get('phase') != 'Running': continue
+    cs = pod['status'].get('containerStatuses', [])
+    not_ready = [c['name'] for c in cs if not c.get('ready', False)]
+    if not_ready:
+        ns = pod['metadata']['namespace']
+        name = pod['metadata']['name']
+        print(f'{ns}/{name}: NotReady containers = {not_ready}')
+"
+
+# 2. 원인 확인
+kubectl describe pod <POD_NAME> -n <NS> | grep -A10 "Conditions\|Readiness"
+
+# 3. 판단 기준 (Gate 분류 기준과 동일)
+# - Pod 생성 후 3분 미만 → TRANSIENT (대기)
+# - Pod 생성 후 5분 초과 → BLOCKING (즉시 중단, 원인 조사)
+# - 3~5분 사이 → 유예 기간 (재확인)
+
+# 4. BLOCKING 원인별 대응
+# Readiness probe 실패 → 애플리케이션 로그 확인
+kubectl logs <POD_NAME> -n <NS>
+# Init container 미완료 → init container 로그 확인
+kubectl logs <POD_NAME> -n <NS> -c <INIT_CONTAINER_NAME>
+```
+
 ### CrashLoopBackOff 급증
 
 ```bash

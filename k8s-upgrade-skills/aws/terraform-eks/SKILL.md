@@ -337,6 +337,6 @@ Produce the final report using the template in [reference.md](reference.md), in 
 5. **No apply without plan**: Every `terraform apply` must be preceded by `terraform plan` review.
 6. **Abort on unexpected destroy**: If plan shows unexpected resource destruction, STOP immediately.
 7. **No field-selector for pod phase**: `--field-selector status.phase!=Running` is not supported on EKS API server. Always use JSON + Python for phase-based filtering.
-8. **No silent pod ignore**: Never mark a phase Gate as passed while unhealthy pods exist. Classify every non-Running pod (TRANSIENT / STALE / BLOCKING) and resolve before proceeding.
+8. **No silent pod ignore**: Never mark a phase Gate as passed while unhealthy pods exist. Classify every non-Running pod AND every Running pod with NotReady containers (TRANSIENT / STALE / BLOCKING) and resolve before proceeding.
 9. **Completion report only after clean state**: The final report must not be issued until Phase 7 gate confirms zero unhealthy pods.
 10. **Gate scripts are authoritative**: The LLM MUST NOT override or reinterpret gate script exit codes. Exit code 1 = STOP. No exceptions.
