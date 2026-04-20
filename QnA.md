@@ -75,6 +75,10 @@ Karpenter 노드는 IaC에서 AMI alias를 업데이트하면 Karpenter의 Drift
 즉시 중단합니다. 스킬은 `terraform plan` 결과에서 `-/+` (destroy-recreate) 패턴을 감지하면 apply를 진행하지 않고 사용자에게 보고합니다. `time_sleep` 같은 무해한 리소스는 예외로 허용합니다.
 현재는 Data Plane 등 실제 워크로드의 다운타임이 발생 할 수 있는 리소스를 감지하도록 선언되어 있습니다
 
+### Q: Phase 6 Gate에서 "변경 없음"이라고 나오는데 실제로는 변경이 있었습니다
+
+`terraform show -json`의 `resource_changes`에는 실제 변경이 없는 `no-op`와 `read` 항목도 포함됩니다. Phase 6 Gate(`phase_gate.py`)는 이 항목들을 자동으로 제외하고 실제 변경(create/update/delete/replace)만 카운트합니다. 따라서 no-op/read만 남은 경우 "변경 없음"으로 정상 보고됩니다.
+
 ---
 
 ## 설치 및 도구
