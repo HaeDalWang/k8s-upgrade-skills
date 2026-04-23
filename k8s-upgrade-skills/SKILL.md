@@ -3,6 +3,7 @@ name: k8s-version-upgrade
 description: >
   Zero-downtime Kubernetes version upgrade across multiple infrastructure types (AWS EKS, On-prem Kubespray).
   Validates recipe, routes to the correct platform/IaC-specific sub-skill, and enforces phase-gated safety.
+  Note: disruption-aware (detects risks proactively) but does not guarantee zero-downtime.
   Trigger keywords: 'K8s upgrade', 'EKS upgrade', 'Kubernetes version upgrade', 'K8s version upgrade',
   'upgrade EKS', 'upgrade Kubernetes', 'cluster upgrade'
 ---
@@ -10,21 +11,67 @@ description: >
 # Kubernetes Version Upgrade — Root Router
 
 This skill upgrades Kubernetes clusters across multiple infrastructure types with zero-downtime and workload protection.
-It reads user requirements from `recipe.yaml`, validates them, and routes to exactly ONE platform-specific sub-skill.
+It collects upgrade requirements (from `recipe.yaml` if present, or interactively from the user), validates them, and routes to exactly ONE platform-specific sub-skill.
 
 ---
 
-## Step 1: Read and Validate Recipe
+## Step 1: Collect and Validate Recipe
 
-Find `recipe.yaml` in the project root or current working directory. If not found, fall back to `recipe.md` (YAML block inside markdown).
+### 1-A: Check for existing recipe.yaml
 
-Run schema validation before parsing:
+Look for `recipe.yaml` in the project root or current working directory. Also fall back to `recipe.md` (YAML block inside markdown) if present.
+
+**If found**: skip to Step 1-C (validate).
+
+**If not found**: proceed to Step 1-B (interactive collection).
+
+---
+
+### 1-B: Interactive Collection (no recipe.yaml)
+
+Ask the user for the following fields **in a single message** (do not ask one by one):
+
+```
+업그레이드할 클러스터 정보를 알려주세요:
+
+1. environment  : aws / on-prem
+2. platform     : eks / kubespray
+3. iac          : terraform / none
+4. cluster_name : 클러스터 이름
+5. current_version : 현재 버전 (예: "1.33")
+6. target_version  : 목표 버전 (예: "1.34")
+
+선택 항목:
+- output_language : ko / en (기본: ko)
+- notes : 특이사항 (없으면 생략)
+```
+
+Once the user provides all required fields, generate `recipe.yaml` in the current working directory:
+
+```yaml
+environment: <value>
+platform: <value>
+iac: <value>
+cluster_name: <value>
+current_version: "<value>"
+target_version: "<value>"
+output_language: <ko|en>
+notes: "<value or empty>"
+```
+
+Inform the user: `recipe.yaml을 생성했습니다. 다음 세션에서 재사용됩니다.`
+
+---
+
+### 1-C: Validate Recipe
+
+Run schema validation:
 
 ```bash
 python3 scripts/validate_recipe.py recipe.yaml
 ```
 
-If validation fails (exit code 1), report the error to the user and do NOT proceed.
+If validation fails (exit code 1), report the specific error and do NOT proceed.
 
 ### Required Fields
 
@@ -36,8 +83,6 @@ If validation fails (exit code 1), report the error to the user and do NOT proce
 | `cluster_name` | string | non-empty cluster identifier |
 | `current_version` | string | e.g. `"1.34"` (quoted) |
 | `target_version` | string | e.g. `"1.35"` (quoted) |
-
-If ANY required field is empty or missing, list all missing fields and ask the user to fill them. Do NOT proceed until all 6 fields are populated.
 
 ### Version Constraint
 

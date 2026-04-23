@@ -4,6 +4,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars.json
+.tfplan
 crash.log
 crash.*.log
 .DS_Store
