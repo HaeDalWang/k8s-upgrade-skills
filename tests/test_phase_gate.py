@@ -16,7 +16,6 @@ import unittest.mock
 import pytest
 
 # ── phase_gate 모듈 import ──
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'k8s-upgrade-skills', 'scripts'))
 import phase_gate
 
 
@@ -812,11 +811,17 @@ class TestPhase3Property:
 
         # Determine expected result
         all_addons_active = all(status == "ACTIVE" for _, status in addon_statuses)
+        any_addon_updating = any(status == "UPDATING" for _, status in addon_statuses)
         all_pods_healthy = all(
             phase == "Running" and ready
             for phase, ready in pod_states
         )
-        expected = 0 if (all_addons_active and all_pods_healthy) else 1
+        if not all_addons_active and any_addon_updating and not any(
+            status not in ("ACTIVE", "UPDATING") for _, status in addon_statuses
+        ):
+            expected = 2
+        else:
+            expected = 0 if (all_addons_active and all_pods_healthy) else 1
 
         with tempfile.TemporaryDirectory() as tmpdir:
             audit_log = os.path.join(tmpdir, "audit.log")
@@ -2830,7 +2835,6 @@ class TestAuditLogAppend:
     def test_audit_flush_appends_not_overwrites(self, tmp_path):
         """두 번 flush 후 양쪽 기록이 모두 존재해야 함."""
         import importlib
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'k8s-upgrade-skills', 'scripts'))
         import lib
         importlib.reload(lib)
 

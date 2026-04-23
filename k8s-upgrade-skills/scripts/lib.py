@@ -72,48 +72,15 @@ class GateResult:
 
 
 # ══════════════════════════════════════════════════════════════
-# 모듈 레벨 호환 패턴 (_gate 인스턴스 + 동기화)
+# 모듈 레벨 _gate 인스턴스 — 단일 진실 원천
 # ══════════════════════════════════════════════════════════════
 
-# 모듈 레벨 기본 인스턴스 (하위 호환)
 _gate = GateResult()
-
-# 하위 호환용 모듈 레벨 참조 (테스트에서 lib.critical_fail 등으로 접근)
-critical_fail = 0
-high_warn = 0
-medium_info = 0
-total_pass = 0
-total_rules = 0
-audit_lines: list[str] = []
-
-
-def _sync_from_gate() -> None:
-    """_gate 인스턴스의 값을 모듈 레벨 변수에 동기화 (하위 호환)."""
-    global critical_fail, high_warn, medium_info, total_pass, total_rules, audit_lines
-    critical_fail = _gate.critical_fail
-    high_warn = _gate.high_warn
-    medium_info = _gate.medium_info
-    total_pass = _gate.total_pass
-    total_rules = _gate.total_rules
-    audit_lines = _gate.audit_lines
-
-
-def _sync_to_gate() -> None:
-    """모듈 레벨 변수의 값을 _gate 인스턴스에 동기화 (테스트에서 직접 수정 시)."""
-    _gate.critical_fail = critical_fail
-    _gate.high_warn = high_warn
-    _gate.medium_info = medium_info
-    _gate.total_pass = total_pass
-    _gate.total_rules = total_rules
-    # audit_lines는 참조 동기화 — 새 리스트 할당 시 방어
-    if audit_lines is not _gate.audit_lines:
-        _gate.audit_lines = audit_lines
 
 
 def reset_gate() -> None:
     """글로벌 Gate 상태 초기화."""
     _gate.reset()
-    _sync_from_gate()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -129,17 +96,14 @@ def audit_init(cluster_name: str, current_ver: str, target_ver: str) -> None:
         f"# Started: {now}",
         "# ──────────────────────────────────────────",
     ])
-    _sync_from_gate()
 
 
 def audit_write(rule_id: str, result: str, detail: str) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _gate.audit_lines.append(f"{now} | {rule_id} | {result} | {detail}")
-    _sync_from_gate()
 
 
 def audit_flush(path: str) -> None:
-    _sync_to_gate()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     gate = "BLOCKED" if _gate.critical_fail > 0 else ("WARN" if _gate.high_warn > 0 else "OPEN")
     _gate.audit_lines.extend([
@@ -151,15 +115,13 @@ def audit_flush(path: str) -> None:
     new_content = "\n".join(_gate.audit_lines) + "\n"
     with open(path, "a", encoding="utf-8") as f:
         f.write(new_content)
-    _sync_from_gate()
+    _gate.audit_lines.clear()
 
 
 # ══════════════════════════════════════════════════════════════
 # 결과 기록
 # ══════════════════════════════════════════════════════════════
 def record(rule_id: str, severity: str, result: str, detail: str) -> None:
-    global critical_fail, high_warn, medium_info, total_pass, total_rules
-    _sync_to_gate()
     _gate.total_rules += 1
 
     if result == "PASS" or result == "SKIP":
@@ -179,13 +141,12 @@ def record(rule_id: str, severity: str, result: str, detail: str) -> None:
             print(f"{CYAN}ℹ️  INFO{NC}  {rule_id:<8s} [{severity}] {detail}")
 
     audit_write(rule_id, result, detail)
-    _sync_from_gate()
 
 
 # ══════════════════════════════════════════════════════════════
 # CLI 헬퍼
 # ══════════════════════════════════════════════════════════════
-def run_cmd(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+def run_cmd(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
     """subprocess wrapper — 실패 시 빈 stdout 반환."""
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -193,7 +154,7 @@ def run_cmd(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr=str(e))
 
 
-def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 30) -> Optional[dict]:
+def kubectl_json(resource: str, all_ns: bool = True, timeout: int = 60) -> Optional[dict]:
     """kubectl get <resource> -o json 실행 후 dict 반환. 실패 시 None 반환."""
     cmd = ["kubectl", "get", resource, "-o", "json"]
     if all_ns:

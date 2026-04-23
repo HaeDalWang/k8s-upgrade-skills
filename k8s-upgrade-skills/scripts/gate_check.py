@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter, defaultdict
@@ -32,20 +33,19 @@ from pathlib import Path
 # 공통 헬퍼 import (lib.py)
 # ══════════════════════════════════════════════════════════════
 try:
-    import lib as _lib
     from lib import (
         run_cmd, kubectl_json, _parse_cpu, _parse_mem,
         audit_init, audit_write, audit_flush, record, GateResult,
         RED, YELLOW, GREEN, CYAN, NC,
         SYSTEM_NS, DATA_PLANE_RESOURCES, ADDON_BAD_STATES,
-        _gate,
+        _gate, reset_gate,
     )
 except ImportError:
     print("ERROR: lib.py not found. Run install.sh --force to reinstall.", file=sys.stderr)
     sys.exit(127)
 
-# ── 모듈 레벨 mutable 변수 프록시 (하위 호환) ──
-# gate_check.critical_fail 등의 접근 패턴을 lib 모듈로 위임
+# ── 모듈 레벨 mutable 변수 프록시 ──
+# gate_check.critical_fail 등의 접근 패턴을 _gate 인스턴스로 위임
 _MUTABLE_ATTRS = frozenset({
     "critical_fail", "high_warn", "medium_info",
     "total_pass", "total_rules", "audit_lines",
@@ -54,42 +54,8 @@ _MUTABLE_ATTRS = frozenset({
 
 def __getattr__(name: str):
     if name in _MUTABLE_ATTRS:
-        return getattr(_lib, name)
+        return getattr(_gate, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def _sync_from_gate() -> None:
-    """_gate → lib 모듈 레벨 변수 동기화 (gate_check 호환 래퍼)."""
-    _lib._sync_from_gate()
-    # gate_check.__dict__에 직접 설정된 로컬 오버라이드 제거 → __getattr__ 프록시 복원
-    import sys as _sys
-    _mod = _sys.modules[__name__]
-    for attr in _MUTABLE_ATTRS:
-        _mod.__dict__.pop(attr, None)
-
-
-def _sync_to_gate() -> None:
-    """gate_check/lib 모듈 레벨 변수 → _gate 동기화 (gate_check 호환 래퍼).
-
-    테스트에서 gate_check.critical_fail = N 으로 직접 설정한 경우,
-    해당 값을 lib 모듈로 전파한 후 _gate에 동기화한다.
-    """
-    import sys as _sys
-    _mod = _sys.modules[__name__]
-    for attr in _MUTABLE_ATTRS:
-        if attr in _mod.__dict__:
-            setattr(_lib, attr, _mod.__dict__[attr])
-    _lib._sync_to_gate()
-
-
-def reset_gate() -> None:
-    """글로벌 Gate 상태 초기화 (gate_check 호환 래퍼)."""
-    _lib.reset_gate()
-    # gate_check.__dict__에 직접 설정된 로컬 오버라이드 제거
-    import sys as _sys
-    _mod = _sys.modules[__name__]
-    for attr in _MUTABLE_ATTRS:
-        _mod.__dict__.pop(attr, None)
 
 # ══════════════════════════════════════════════════════════════
 # Phase 0 전용 상수 및 정규식
@@ -253,10 +219,12 @@ def check_com003(cluster_name: str, target_version: str) -> None:
             "--output", "json",
         ])
         if r.returncode != 0:
+            bad_addons.append(f"{addon}(조회실패)")
             continue
         try:
             status = json.loads(r.stdout).get("addon", {}).get("status", "")
         except json.JSONDecodeError:
+            bad_addons.append(f"{addon}(파싱실패)")
             continue
         if status in ADDON_BAD_STATES:
             bad_addons.append(f"{addon}({status})")
@@ -947,8 +915,7 @@ def main() -> None:
 
     # 의존성 확인
     for cmd in ("kubectl", "aws"):
-        r = run_cmd(["which", cmd])
-        if r.returncode != 0:
+        if shutil.which(cmd) is None:
             print(f"ERROR: '{cmd}' not found in PATH.", file=sys.stderr)
             sys.exit(127)
 
@@ -958,8 +925,7 @@ def main() -> None:
         if not tf_path.is_dir():
             print(f"ERROR: --tf-dir '{args.tf_dir}' is not a directory.", file=sys.stderr)
             sys.exit(1)
-        r = run_cmd(["which", "terraform"])
-        if r.returncode != 0:
+        if shutil.which("terraform") is None:
             print("ERROR: 'terraform' not found in PATH.", file=sys.stderr)
             sys.exit(1)
 
@@ -1053,7 +1019,6 @@ def main() -> None:
     print()
     print("════════════════════════════════════════════════════════════")
     print(f"  검증 결과")
-    _sync_to_gate()
     print(f"  총 {_gate.total_rules}개 규칙 | PASS: {_gate.total_pass} "
           f"| CRITICAL FAIL: {_gate.critical_fail} | HIGH WARN: {_gate.high_warn}"
           f" | MEDIUM INFO: {_gate.medium_info}")

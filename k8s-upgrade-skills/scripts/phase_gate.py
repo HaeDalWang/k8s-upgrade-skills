@@ -116,6 +116,7 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         return 1
 
     bad_addons = []
+    updating_addons = []
     for addon in addons:
         r = run_cmd(["aws", "eks", "describe-addon", "--cluster-name", cluster_name, "--addon-name", addon, "--output", "json"])
         if r.returncode != 0:
@@ -126,7 +127,11 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         except json.JSONDecodeError:
             bad_addons.append(f"{addon}(JSON파싱실패)")
             continue
-        if status != "ACTIVE":
+        if status == "ACTIVE":
+            continue
+        if status == "UPDATING":
+            updating_addons.append(addon)
+        else:
             bad_addons.append(f"{addon}({status})")
 
     if bad_addons:
@@ -134,6 +139,12 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         audit_write("PHASE3-ADDON", "FAIL", detail)
         print(f"{RED}❌ PHASE3-ADDON FAIL{NC}  {detail}")
         failed = True
+    elif updating_addons:
+        detail = f"업데이트 중인 Add-on: {', '.join(updating_addons)} — 완료 후 재실행하세요"
+        audit_write("PHASE3-ADDON", "WARN", detail)
+        print(f"{YELLOW}⚠️  PHASE3-ADDON WARN{NC}  {detail}")
+        audit_flush(audit_log)
+        return 2
     else:
         audit_write("PHASE3-ADDON", "PASS", f"모든 Add-on ACTIVE ({len(addons)}개)")
         print(f"{GREEN}✅ PHASE3-ADDON PASS{NC}  모든 Add-on ACTIVE ({len(addons)}개)")

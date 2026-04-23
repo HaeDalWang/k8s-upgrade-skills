@@ -8,13 +8,11 @@ Task 8.11: Unit 테스트 (Edge case 및 통합 검증)
 import inspect
 import subprocess
 import sys
-import os
 import unittest.mock
 
 import pytest
 
 # ── gate_check 모듈 import ──
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'k8s-upgrade-skills', 'scripts'))
 import gate_check
 
 
@@ -1303,13 +1301,12 @@ class TestGateExitCodeProperty:
 
         **Validates: Requirements 9.3, 9.4, 9.5**
         """
-        # Set module-level counters directly
-        gate_check.critical_fail = critical_fail
-        gate_check.high_warn = high_warn
-        gate_check.total_pass = 0
-        gate_check.total_rules = 0
-        gate_check.audit_lines.clear()
-        gate_check._sync_to_gate()
+        # Set module-level counters directly via _gate
+        gate_check._gate.critical_fail = critical_fail
+        gate_check._gate.high_warn = high_warn
+        gate_check._gate.total_pass = 0
+        gate_check._gate.total_rules = 0
+        gate_check._gate.audit_lines.clear()
 
         expected = _expected_exit_code(critical_fail, high_warn)
 
