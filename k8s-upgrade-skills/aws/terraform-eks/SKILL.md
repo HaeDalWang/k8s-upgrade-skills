@@ -185,7 +185,7 @@ cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
 
 This typically takes 8–15 minutes.
 
-### 2-3. Poll Until Complete
+### 2-4. Poll Until Complete
 
 Poll every 60 seconds:
 
@@ -502,6 +502,7 @@ When any phase gate returns exit code 1, generate a failure report **before** st
 |-------------|-------------|---------|
 | Phase 0 | Type A | 사전 검증 실패 보고서 |
 | Phase 1–6 | Type B | 업그레이드 중단 보고서 |
+| Phase 7 exit 1 | Type B | 업그레이드 중단 보고서 (최종 검증 실패) |
 
 **For Type B reports**, include in `{MIXED_VERSION_WARNING_OR_CLEAN}`:
 - Phase 0–1 FAIL: "업그레이드 미시작 — 클러스터 상태 변경 없음"
