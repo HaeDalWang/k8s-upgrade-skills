@@ -115,7 +115,31 @@ target_version: "1.35"    # 목표 버전 (따옴표 필수) — 반드시 curre
 # 선택 항목
 output_language: ko       # ko | en
 notes: ""                 # 특이사항
+
+# 서비스 가용성 모니터링 (선택) — 없으면 Service-Aware Sub-Agent SKIP
+services:
+  - name: my-api
+    namespace: production
+    min_endpoints: 2
+    health_check_url: "https://api.example.com/health"  # 외부 접근 가능 URL
+  - name: my-worker
+    namespace: production
+    min_endpoints: 1
+    # health_check_url 없음 → BestEffort 모드
 ```
+
+> **Service-Aware Gate 한계 안내**
+>
+> `services` 필드는 노드 교체 중 서비스 가용성을 실시간으로 감시하는 Sub-Agent를 투입합니다.
+>
+> | 설정 | 감시 방식 | 보장 수준 |
+> |------|---------|---------|
+> | `health_check_url` 있음 | EndpointSlice ready 수 + HTTP 응답 확인 | 트래픽 레벨 감시 |
+> | `health_check_url` 없음 | EndpointSlice ready 수만 확인 | **BestEffort** — Pod 레벨만 |
+>
+> - `health_check_url`은 에이전트 실행 환경에서 **외부 접근 가능한 URL**이어야 합니다 (VPC 내부 URL 불가)
+> - `health_check_url` 없이는 ALB/Ingress 전파 지연으로 인한 일시적 5xx를 감지할 수 없습니다
+> - 진정한 무중단을 원한다면 `health_check_url` 설정을 강력히 권장합니다
 
 ### 필요 권한 (IAM / RBAC)
 

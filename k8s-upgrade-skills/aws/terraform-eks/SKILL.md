@@ -273,6 +273,68 @@ Before the node rolling update begins, launch a Sub-Agent in parallel to watch d
 - **Read-only** — never run any write or delete commands
 - Terminate immediately when the main agent signals Phase 4 complete
 
+### 4-0b. Launch Service-Aware Sub-Agent (if services defined)
+
+**Skip this step if `services` field is absent in recipe.yaml.**
+
+If `services` is defined, launch a second Sub-Agent in parallel to monitor service availability during node rollout.
+
+**Sub-Agent instructions:**
+- For each service in `services`, poll every 30 seconds:
+
+  1. Check EndpointSlice ready address count:
+     ```bash
+     kubectl get endpointslices -n <namespace> \
+       -l kubernetes.io/service-name=<name> -o json | python3 -c "
+     import json, sys
+     data = json.load(sys.stdin)
+     ready = sum(
+         len(ep.get('addresses', []))
+         for item in data.get('items', [])
+         for ep in item.get('endpoints', [])
+         if ep.get('conditions', {}).get('ready', False)
+     )
+     print(ready)
+     "
+     ```
+     If `ready < min_endpoints`, record WARN and report to main agent:
+     ```bash
+     python3 scripts/audit_event.py \
+       --audit-log audit.log \
+       --rule-id "SVC-P4" \
+       --result "WARN" \
+       --detail "<name>: ready_endpoints=<N> < min=<min_endpoints> (EndpointSlice)"
+     ```
+
+  2. If `health_check_url` is set, check HTTP response:
+     ```bash
+     curl -sf --max-time 5 --retry 2 <health_check_url> -o /dev/null
+     ```
+     If non-2xx or timeout, record WARN and report to main agent:
+     ```bash
+     python3 scripts/audit_event.py \
+       --audit-log audit.log \
+       --rule-id "SVC-P4" \
+       --result "WARN" \
+       --detail "<name>: health_check_url returned non-2xx or timed out"
+     ```
+
+- For services without `health_check_url`, warn **once** at startup:
+  ```
+  ⚠️ [SVC-P4] <name>: health_check_url not set — monitoring EndpointSlice only.
+  True zero-downtime cannot be guaranteed without HTTP health check.
+  ```
+  Record this warning to audit.log:
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "SVC-P4" \
+    --result "INFO" \
+    --detail "<name>: BestEffort mode — EndpointSlice only, no health_check_url"
+  ```
+- **Read-only** — never run any write or delete commands
+- Terminate immediately when the main agent signals Phase 4 complete
+
 ### 4-1. Monitor Node Rollout
 
 Poll every 60 seconds until all nodes show the target version:
@@ -334,6 +396,12 @@ Before Karpenter node replacement begins, launch a Sub-Agent in parallel to watc
 - Use `--result "FAIL"` when `FailedDrain` or `NodeClaimTerminationFailed` is detected
 - **Read-only** — never run any write or delete commands
 - Terminate immediately when the main agent signals Phase 5 complete
+
+### 5-0b. Launch Service-Aware Sub-Agent (if services defined)
+
+**Skip this step if `services` field is absent in recipe.yaml.**
+
+Same instructions as Phase 4-0b, with rule-id `SVC-P5` instead of `SVC-P4`.
 
 ### 5-1. Monitor Karpenter Node Replacement
 

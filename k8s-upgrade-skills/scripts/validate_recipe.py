@@ -30,6 +30,10 @@ OPTIONAL_FIELDS = {
     "notes":           {"type": str, "default": ""},
 }
 
+# services 항목 스키마
+_SERVICE_REQUIRED = {"name", "namespace", "min_endpoints"}
+_SERVICE_OPTIONAL = {"health_check_url"}
+
 # ── 지원 플랫폼 조합 ────────────────────────────────────────
 SUPPORTED_COMBOS = [
     ("aws", "eks", "terraform"),
@@ -86,7 +90,93 @@ def parse_simple_yaml(text: str) -> dict:
     return result
 
 
-def extract_yaml_from_md(text: str) -> str:
+def parse_services_block(text: str) -> list[dict]:
+    """Parse the services: list block from YAML text."""
+    lines = text.splitlines()
+    in_services = False
+    service_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^services\s*:', stripped):
+            in_services = True
+            continue
+        if in_services:
+            if line and not line[0].isspace():
+                break
+            service_lines.append(line)
+
+    if not service_lines:
+        return []
+
+    services: list[dict] = []
+    current: dict = {}
+    for line in service_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith('- '):
+            if current:
+                services.append(current)
+            current = {}
+            rest = stripped[2:].strip()
+            if ':' in rest:
+                k, _, v = rest.partition(':')
+                current[k.strip()] = _parse_service_value(v.strip())
+        elif ':' in stripped:
+            k, _, v = stripped.partition(':')
+            current[k.strip()] = _parse_service_value(v.strip())
+
+    if current:
+        services.append(current)
+    return services
+
+
+def _parse_service_value(v: str) -> str:
+    """Strip quotes and inline comments from a service field value."""
+    v = v.strip()
+    if not v:
+        return ""
+    if not (v.startswith('"') or v.startswith("'")):
+        for i, ch in enumerate(v):
+            if ch == '#':
+                v = v[:i].strip()
+                break
+    if (v.startswith('"') and v.endswith('"')) or \
+       (v.startswith("'") and v.endswith("'")):
+        v = v[1:-1]
+    return v
+
+
+def validate_services(services: list[dict]) -> list[str]:
+    """services 리스트 각 항목 검증."""
+    errors: list[str] = []
+    for i, svc in enumerate(services):
+        prefix = f"services[{i}]"
+        for field in _SERVICE_REQUIRED:
+            if not svc.get(field, ""):
+                errors.append(f"{prefix}: 필수 필드 누락 '{field}'")
+
+        me = svc.get("min_endpoints", "")
+        if me:
+            try:
+                val = int(me)
+                if val < 1:
+                    errors.append(
+                        f"{prefix}.min_endpoints: 1 이상이어야 합니다 (현재: {val})")
+            except ValueError:
+                errors.append(
+                    f"{prefix}.min_endpoints: 정수여야 합니다 (현재: '{me}')")
+
+        url = svc.get("health_check_url", "")
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            errors.append(
+                f"{prefix}.health_check_url: http:// 또는 https://로 시작해야 합니다")
+
+    return errors
+
+
+
     """마크다운 코드블록(```yaml ... ```) 내 YAML 추출."""
     pattern = re.compile(r'```ya?ml\s*\n(.*?)```', re.DOTALL)
     match = pattern.search(text)
@@ -106,7 +196,11 @@ def load_recipe(path: str) -> dict:
             file=sys.stderr,
         )
         content = extract_yaml_from_md(content)
-    return parse_simple_yaml(content)
+    recipe = parse_simple_yaml(content)
+    services = parse_services_block(content)
+    if services:
+        recipe["_services"] = services
+    return recipe
 
 
 # ── 검증 로직 ────────────────────────────────────────────────
@@ -182,6 +276,11 @@ def validate(recipe: dict) -> list[str]:
                     f"'{field}': 허용되지 않는 값 '{value}' — "
                     f"허용: {schema['allowed']}")
 
+    # 5. services 필드 검증 (선택)
+    services = recipe.get("_services", [])
+    if services:
+        errors.extend(validate_services(services))
+
     return errors
 
 
@@ -207,7 +306,17 @@ def main() -> None:
     # 파싱 결과 출력
     print(f"📋 Recipe: {path}")
     for k, v in recipe.items():
+        if k == "_services":
+            continue
         print(f"   {k}: {v}")
+    services = recipe.get("_services", [])
+    if services:
+        print(f"   services: {len(services)}개")
+        for svc in services:
+            hc = svc.get("health_check_url", "")
+            mode = "EndpointSlice + HTTP" if hc else "EndpointSlice only (BestEffort)"
+            print(f"     - {svc.get('namespace')}/{svc.get('name')} "
+                  f"min_endpoints={svc.get('min_endpoints')} [{mode}]")
     print()
 
     errors = validate(recipe)

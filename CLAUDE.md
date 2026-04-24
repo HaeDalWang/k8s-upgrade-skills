@@ -37,6 +37,13 @@ python3 k8s-upgrade-skills/scripts/audit_event.py \
   --result "WARN" \
   --detail "FailedDrain: node/ip-10-0-1-23 — PDB my-api disruptionsAllowed=0"
 
+# Service-Aware Sub-Agent 이벤트 기록 예시
+python3 k8s-upgrade-skills/scripts/audit_event.py \
+  --audit-log audit.log \
+  --rule-id "SVC-P4" \
+  --result "WARN" \
+  --detail "my-api: ready_endpoints=1 < min=2 (EndpointSlice)"
+
 # recipe 검증
 python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.yaml
 
@@ -161,6 +168,8 @@ Python 3.9+ 지원. `dict | None` 타입 힌트 사용 불가 → `Optional[dict
 `recipe.yaml`이 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성한다. 이미 있으면 그대로 재사용한다.
 
 `example/terraform-eks/`에 EKS + Karpenter 참조 Terraform 코드와 `recipe.yaml` 예제가 있다.
+
+## 새 규칙 추가 시 체크리스트
 
 ## 새 규칙 추가 시 체크리스트
 
