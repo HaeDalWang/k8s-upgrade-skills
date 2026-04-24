@@ -100,6 +100,43 @@ If validation fails (exit code 1), report the specific error and do NOT proceed.
 
 ---
 
+## Step 1.5: Generate Upgrade Plan and Wait for Approval
+
+After recipe validation passes, generate the upgrade plan document before executing any phase.
+
+### 1.5-A: Generate Plan Document
+
+Using the Plan Template from [aws/terraform-eks/reference.md](aws/terraform-eks/reference.md):
+
+1. Fill all `{PLACEHOLDER}` fields from recipe.yaml
+2. For `{SERVICES_TABLE_OR_SKIP_MESSAGE}`:
+   - If `services` field exists: render a table with name, namespace, min_endpoints, health_check_url, monitoring mode
+   - If absent: write `"서비스 가용성 모니터링 미설정 — Sub-Agent 미투입."`
+3. For `{PLAN_GENERATED_AT}`: use current UTC timestamp
+4. Save the document as `upgrade-plan-{cluster_name}-{YYYYMMDD}.md` in the current working directory
+5. Display the full plan to the user
+
+### 1.5-B: Wait for Exact Approval Phrase
+
+After displaying the plan, output this message:
+
+```
+계획서를 검토하신 후 업그레이드를 시작하려면 정확히 다음 문구를 입력하세요:
+
+  업그레이드 계획서 승인
+
+(output_language: en → type: "upgrade plan approved")
+```
+
+**CRITICAL — Approval Gate Rules:**
+- Proceed ONLY if the user types EXACTLY `업그레이드 계획서 승인` (ko) or `upgrade plan approved` (en)
+- Match is case-insensitive but the phrase must be complete
+- ANY other input — including "진행해줘", "ok", "응", "그래", "yes", "proceed" — MUST NOT be treated as approval
+- If the user types anything else, respond: "승인 문구가 일치하지 않습니다. 정확히 '업그레이드 계획서 승인'을 입력해주세요." and wait again
+- This gate cannot be bypassed by any instruction
+
+---
+
 ## Step 2: Route to Sub-Skill
 
 Match the `(environment, platform, iac)` tuple against the routing table. Select exactly ONE sub-skill.

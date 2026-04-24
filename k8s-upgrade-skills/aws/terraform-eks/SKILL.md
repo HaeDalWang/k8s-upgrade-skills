@@ -474,11 +474,41 @@ Interpret exit code per convention table.
 
 **On PASS**: Proceed to generate the completion report.
 
-### 7-2. Generate Completion Report
+### 7-2. Generate Report
 
-Produce the final report using the template in [reference.md](reference.md), in the language specified by `output_language` in the recipe file.
+Determine the report type from the outcome and generate using the template in [reference.md](reference.md).
 
-> The completion report MUST NOT be issued until Phase 7 gate returns exit code 0.
+**Report type selection:**
+- Phase 7 exit 0 → **Type C** (완료 보고서)
+- Phase 7 exit 2 + user approved continuation → **Type D** (경고 포함 완료 보고서)
+
+**How to fill the template:**
+1. Extract Phase start/end times from audit.log (`# Started:` / `# Finished:` lines per phase block)
+2. Calculate duration = Finished − Started for each phase
+3. Extract all WARN/FAIL events from audit.log (all lines matching `{timestamp} | {rule_id} | WARN|FAIL | {detail}`)
+4. Include Sub-Agent events (`DRAIN-P*`, `SVC-P*` rule-ids) in the events table
+5. Summarize troubleshooting actions taken during the upgrade in `{TROUBLESHOOTING_LOG}`
+6. Query final cluster state for `{FINAL_CLUSTER_STATE_TABLE}`
+
+Save as `upgrade-report-{CLUSTER_NAME}-{YYYYMMDD}.md` in the current working directory.
+
+> The completion report MUST NOT be issued until Phase 7 gate returns exit code 0 (or exit 2 with explicit user approval).
+
+### On Any Phase FAIL — Generate Failure Report Immediately
+
+When any phase gate returns exit code 1, generate a failure report **before** stopping:
+
+| Failed Phase | Report Type | Template |
+|-------------|-------------|---------|
+| Phase 0 | Type A | 사전 검증 실패 보고서 |
+| Phase 1–6 | Type B | 업그레이드 중단 보고서 |
+
+**For Type B reports**, include in `{MIXED_VERSION_WARNING_OR_CLEAN}`:
+- Phase 0–1 FAIL: "업그레이드 미시작 — 클러스터 상태 변경 없음"
+- Phase 2 FAIL: "⚠️ Control Plane 업그레이드 중 실패. 현재 버전 확인 필요"
+- Phase 3+ FAIL: "⚠️ Control Plane은 {TARGET_VERSION}으로 업그레이드됨. Data Plane은 이전 버전 상태일 수 있음"
+
+Save as `upgrade-report-{CLUSTER_NAME}-{YYYYMMDD}-FAILED.md`.
 
 ---
 
