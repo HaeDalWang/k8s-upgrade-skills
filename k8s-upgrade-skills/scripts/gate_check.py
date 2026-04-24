@@ -79,8 +79,13 @@ def check_com002(current_version: str, target_version: str) -> None:
         record("COM-002", "CRITICAL", "FAIL",
                f"버전 형식 오류 ({current_version} → {target_version}) → 'X.Y' 형식이어야 합니다")
         return
-    curr_minor = int(curr_parts[1])
-    targ_minor = int(targ_parts[1])
+    try:
+        curr_minor = int(curr_parts[1].split("-")[0])
+        targ_minor = int(targ_parts[1].split("-")[0])
+    except ValueError:
+        record("COM-002", "CRITICAL", "FAIL",
+               f"버전 형식 오류 ({current_version} → {target_version}) → 마이너 버전이 정수가 아닙니다")
+        return
     gap = targ_minor - curr_minor
 
     if gap == 1:
@@ -157,7 +162,12 @@ def check_com002a(target_version: str) -> None:
         record("COM-002a", "CRITICAL", "FAIL",
                f"버전 형식 오류 ({target_version}) → 'X.Y' 형식이어야 합니다")
         return
-    targ_minor = int(targ_parts[1])
+    try:
+        targ_minor = int(targ_parts[1].split("-")[0])
+    except ValueError:
+        record("COM-002a", "CRITICAL", "FAIL",
+               f"버전 형식 오류 ({target_version}) → 마이너 버전이 정수가 아닙니다")
+        return
     # K8s 1.28부터 kubelet skew 정책이 n-3으로 완화됨
     max_skew = 3 if targ_minor >= 28 else 2
     nodes = kubectl_json("nodes", all_ns=False)
@@ -172,7 +182,10 @@ def check_com002a(target_version: str) -> None:
         ver_parts = ver.split(".")
         if len(ver_parts) < 2:
             continue
-        node_minor = int(ver_parts[1])
+        try:
+            node_minor = int(ver_parts[1].split("-")[0])
+        except ValueError:
+            continue
         if targ_minor - node_minor > max_skew:
             violations += 1
 
@@ -810,15 +823,13 @@ def check_inf004(plan_output: str) -> None:
     for m in REPLACE_PREFIX.finditer(plan_output):
         recreate_resources.append(m.group(1))
     # "forces replacement" / "must be replaced" context lines
+    # 예: # module.eks.aws_eks_node_group.workers must be replaced
+    _RESOURCE_TYPE_RE = re.compile(r'\b(aws_[a-z0-9_]+)\.[^\s]+\s+(?:must be replaced|forces replacement)')
     for line in plan_output.splitlines():
         if RECREATE_MARKERS.search(line):
-            # Try to extract resource type from nearby context
-            # Lines like: # aws_eks_node_group.xxx must be replaced
-            parts = line.strip().lstrip("# ").split(".")
-            if len(parts) >= 2:
-                rtype = parts[0].strip()
-                if rtype and rtype[0].isalpha():
-                    recreate_resources.append(rtype)
+            m = _RESOURCE_TYPE_RE.search(line)
+            if m:
+                recreate_resources.append(m.group(1))
 
     if not recreate_resources:
         record("INF-004", "HIGH", "PASS", "recreate 마커 없음")

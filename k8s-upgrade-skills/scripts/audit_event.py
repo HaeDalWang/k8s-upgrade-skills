@@ -18,6 +18,7 @@ Exit codes:
 """
 
 import argparse
+import fcntl
 import sys
 from datetime import datetime, timezone
 
@@ -45,7 +46,9 @@ def main() -> int:
 
     try:
         with open(args.audit_log, "a", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             f.write(line)
+            fcntl.flock(f, fcntl.LOCK_UN)
     except OSError as e:
         print(f"ERROR: audit.log 쓰기 실패: {e}", file=sys.stderr)
         return 1
