@@ -143,8 +143,8 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         detail = f"업데이트 중인 Add-on: {', '.join(updating_addons)} — 완료 후 재실행하세요"
         audit_write("PHASE3-ADDON", "WARN", detail)
         print(f"{YELLOW}⚠️  PHASE3-ADDON WARN{NC}  {detail}")
-        audit_flush(audit_log)
-        return 2
+        # UPDATING은 WARN이지만 kube-system Pod 검사는 계속 진행
+        failed = True  # 최종 exit 2 반환을 위해 플래그 설정
     else:
         audit_write("PHASE3-ADDON", "PASS", f"모든 Add-on ACTIVE ({len(addons)}개)")
         print(f"{GREEN}✅ PHASE3-ADDON PASS{NC}  모든 Add-on ACTIVE ({len(addons)}개)")
@@ -169,6 +169,8 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
     for pod in pods:
         name = pod.get("metadata", {}).get("name", "?")
         phase = pod.get("status", {}).get("phase", "")
+        if phase in ("Succeeded", "Completed"):
+            continue  # 정상 완료 상태 — false positive 방지
         if phase != "Running":
             bad_pods.append(f"{name}({phase})")
             continue
@@ -192,6 +194,9 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         print(f"{GREEN}✅ PHASE3-ADDON PASS{NC}  모든 kube-system Pod Running+Ready ({len(pods)}개)")
 
     audit_flush(audit_log)
+    if failed and updating_addons and not bad_addons and not bad_pods:
+        # UPDATING만 있고 bad_addons/bad_pods 없으면 WARN(exit 2)
+        return 2
     return 1 if failed else 0
 
 
