@@ -22,8 +22,8 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
 - `recipe.yaml` 기반 플랫폼/IaC 자동 라우팅 — 환경에 맞는 Sub-Skill 자동 선택
 - recipe 스키마 검증 (`scripts/validate_recipe.py`) — 파싱 실패를 사전 차단
-- **병렬 Sub-Agent 드레인 모니터** (로드맵 2 ✅): terraform apply 실행과 동시에 Sub-Agent가 `kubectl get events`로 드레인 이벤트 실시간 감시. 감지 이벤트는 `audit_event.py`를 통해 audit.log에 기록
-- **Service-Aware Sub-Agent** (로드맵 1 ✅): 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 실시간 감시 (BestEffort)
+- **병렬 Sub-Agent 드레인 모니터**: terraform apply 실행과 동시에 Sub-Agent가 `kubectl get events`로 드레인 이벤트 실시간 감시. 감지 이벤트는 `audit_event.py`를 통해 audit.log에 기록
+- **Service-Aware Sub-Agent**: 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 실시간 감시 (BestEffort)
 
 ## 해당 스킬이 하지 않는 것
 
@@ -42,15 +42,13 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 
 | # | 기능 | 상태 |
 |---|------|------|
-| 1 | **Service-Aware Sub-Agent** — 노드 교체 중 EndpointSlice + HTTP 헬스체크로 서비스 가용성 실시간 감시 | ✅ 완료 |
-| 2 | **병렬 Sub-Agent 드레인 모니터** — terraform apply와 동시에 드레인 이벤트 실시간 감시 및 audit.log 기록 | ✅ 완료 |
-| 3 | **고도화된 폴백 메커니즘** — 실패 시점 클러스터 상태 스냅샷 자동 저장 + AI RCA 리포트 | 📋 계획됨 |
+| 1 | **고도화된 폴백 메커니즘** — 실패 시점 클러스터 상태 스냅샷 자동 저장 + AI RCA 리포트 | 📋 계획됨 |
 
 ## 개발 현황
 
 | Environment | Platform | IaC | 상태 |
 |-------------|----------|-----|------|
-| AWS | EKS | Terraform | ✅ v1 — Self 검증 완료 |
+| AWS | EKS | Terraform | v1 — Self 검증 중|
 | On-Premises | Kubespray | Ansible-playbook | 📋 계획됨 |
 
 ## Quick Start
