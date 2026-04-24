@@ -49,6 +49,8 @@ def parse_simple_yaml(text: str) -> dict:
     """
     result = {}
     for line in text.splitlines():
+        if line != line.lstrip():
+            continue  # 들여쓰기된 줄은 서비스 하위 필드 — 최상위 dict에 포함하지 않음
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -176,7 +178,7 @@ def validate_services(services: list[dict]) -> list[str]:
     return errors
 
 
-
+def extract_yaml_from_md(text: str) -> str:
     """마크다운 코드블록(```yaml ... ```) 내 YAML 추출."""
     pattern = re.compile(r'```ya?ml\s*\n(.*?)```', re.DOTALL)
     match = pattern.search(text)

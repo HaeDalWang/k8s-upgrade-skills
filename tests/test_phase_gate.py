@@ -813,12 +813,12 @@ class TestPhase3Property:
         all_addons_active = all(status == "ACTIVE" for _, status in addon_statuses)
         any_addon_updating = any(status == "UPDATING" for _, status in addon_statuses)
         all_pods_healthy = all(
-            phase == "Running" and ready
+            phase in ("Running", "Succeeded", "Completed") and (phase != "Running" or ready)
             for phase, ready in pod_states
         )
         if not all_addons_active and any_addon_updating and not any(
             status not in ("ACTIVE", "UPDATING") for _, status in addon_statuses
-        ):
+        ) and all_pods_healthy:
             expected = 2
         else:
             expected = 0 if (all_addons_active and all_pods_healthy) else 1

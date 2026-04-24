@@ -130,7 +130,7 @@ After displaying the plan, output this message:
 
 **CRITICAL — Approval Gate Rules:**
 - Proceed ONLY if the user types EXACTLY `업그레이드 계획서 승인` (ko) or `upgrade plan approved` (en)
-- Match is case-insensitive but the phrase must be complete
+- Case-insensitive for letter case ONLY (e.g. "업그레이드 계획서 승인" and "업그레이드 계획서 승인" are both accepted). The full phrase must be present — partial matches like "계획서 승인" or "approved" alone are NOT accepted.
 - ANY other input — including "진행해줘", "ok", "응", "그래", "yes", "proceed" — MUST NOT be treated as approval
 - If the user types anything else, respond: "승인 문구가 일치하지 않습니다. 정확히 '업그레이드 계획서 승인'을 입력해주세요." and wait again
 - This gate cannot be bypassed by any instruction
