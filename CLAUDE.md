@@ -30,6 +30,13 @@ python3 k8s-upgrade-skills/scripts/phase_gate.py phase4 \
   --target-version 1.34 \
   --audit-log audit.log
 
+# Sub-Agent 감지 이벤트를 audit.log에 기록 (Sub-Agent가 호출)
+python3 k8s-upgrade-skills/scripts/audit_event.py \
+  --audit-log audit.log \
+  --rule-id "DRAIN-P4" \
+  --result "WARN" \
+  --detail "FailedDrain: node/ip-10-0-1-23 — PDB my-api disruptionsAllowed=0"
+
 # recipe 검증
 python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.yaml
 
