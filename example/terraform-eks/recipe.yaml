@@ -12,3 +12,16 @@ target_version: "1.34"    # current_version의 차기 마이너 버전만 허용
 # 선택 항목
 output_language: ko       # ko | en (기본: ko)
 notes: "zero downtime plz"
+
+# 서비스 가용성 모니터링 (선택) — 없으면 Service-Aware Sub-Agent SKIP
+# health_check_url 없으면 EndpointSlice만 확인 (BestEffort 모드)
+# 진정한 무중단을 원한다면 health_check_url 설정 강력 권장
+services:
+  - name: my-api
+    namespace: production
+    min_endpoints: 2
+    health_check_url: "https://api.example.com/health"  # 외부 접근 가능 URL
+  - name: my-worker
+    namespace: production
+    min_endpoints: 1
+    # health_check_url 없음 → BestEffort 모드 (EndpointSlice만 확인)
