@@ -134,17 +134,36 @@ terraform plan  # 변경 내용 재확인
 
 ## Phase 4: Data Plane Rolling Update 문제
 
-### FailedEvict 이벤트 (PDB 차단)
+### Sub-Agent 드레인 모니터 보고 해석
+
+Sub-Agent가 audit.log에 기록하고 메인 에이전트에 보고하는 이벤트별 대응:
+
+| REASON | result | 의미 | 즉각 조치 |
+|--------|--------|------|---------|
+| `FailedDrain` | FAIL | PDB 또는 Graceful Termination으로 drain 차단 | 즉시 중단 → PDB 확인 |
+| `DisruptionBlocked` | WARN | PDB disruptionsAllowed=0 | PDB 완화 또는 레플리카 증가 |
+| `ExceededGracePeriod` | WARN | Pod가 terminationGracePeriodSeconds 초과 | 해당 Pod 로그 확인 |
+| `FailedKillPod` | WARN | kubelet이 Pod 강제 종료 실패 | 노드 상태 확인 |
 
 ```bash
-# 1. 차단 원인 확인
-kubectl get events -A --field-selector reason=FailedEvict \
+# Sub-Agent 보고 확인 (audit.log에서 DRAIN-P4 항목 조회)
+grep "DRAIN-P4" audit.log
+```
+
+### FailedDrain 이벤트 (PDB 차단)
+
+```bash
+# 1. Sub-Agent 보고 내용 확인
+grep "DRAIN-P4\|DRAIN-P5" audit.log | grep FAIL
+
+# 2. 차단 원인 확인
+kubectl get events -A --field-selector reason=FailedDrain \
   --sort-by='.lastTimestamp' | tail -10
 
-# 2. 차단 중인 PDB 확인
+# 3. 차단 중인 PDB 확인
 kubectl get pdb -A | grep -v 'ALLOWED' | grep '0'
 
-# 3. 해결: Phase 0 WLS-001과 동일
+# 4. 해결: Phase 0 WLS-001과 동일
 # 레플리카 증가 또는 PDB 완화 후 rolling update가 자동 재개됩니다
 ```
 

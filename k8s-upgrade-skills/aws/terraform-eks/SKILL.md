@@ -154,7 +154,30 @@ Review the plan output:
 - `aws_eks_node_group` release_version change → Expected (rolling update)
 - Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
 
-### 2-2. Targeted Apply
+### 2-2. Launch Sub-Agent Drain Monitor
+
+Before running terraform apply, launch a Sub-Agent in parallel to watch kube-system events in real time.
+
+**Sub-Agent instructions:**
+- Run the following command to watch Warning events:
+  ```bash
+  kubectl get events -n kube-system --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- Report to the main agent immediately and record to audit.log when any of these events are detected:
+  - `FailedMount`, `BackOff`, `OOMKilling`, `NodeNotReady`
+- Record to audit.log by calling the script:
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P2" \
+    --result "WARN" \
+    --detail "<REASON>: <OBJ> — <MSG>"
+  ```
+- **Read-only** — never run any write or delete commands
+- Terminate immediately when the main agent signals Phase 2 complete
+
+### 2-3. Targeted Apply
 
 ```bash
 cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
@@ -218,6 +241,38 @@ Interpret exit code per convention table. On PASS, proceed to Phase 4.
 
 The targeted apply in Phase 2 triggers MNG rolling update automatically. Monitor until complete.
 
+### 4-0. Launch Sub-Agent Drain Monitor
+
+Before the node rolling update begins, launch a Sub-Agent in parallel to watch drain events in real time.
+
+**Sub-Agent instructions:**
+- Run the following command to watch Warning events across all namespaces:
+  ```bash
+  kubectl get events -A --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- Check PDB status every 30 seconds:
+  ```bash
+  kubectl get pdb -A \
+    -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed,DESIRED:.status.desiredHealthy,CURRENT:.status.currentHealthy'
+  ```
+- Report to the main agent immediately and record to audit.log when any of these events are detected:
+  - `FailedDrain` → request immediate stop + report PDB status together
+  - `DisruptionBlocked` → report PDB deadlock
+  - `ExceededGracePeriod` → report Graceful Termination failure
+  - `FailedKillPod` → report forced pod termination failure
+- Record to audit.log by calling the script:
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P4" \
+    --result "WARN" \
+    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
+  ```
+- Use `--result "FAIL"` when `FailedDrain` is detected, and request the main agent to stop immediately
+- **Read-only** — never run any write or delete commands
+- Terminate immediately when the main agent signals Phase 4 complete
+
 ### 4-1. Monitor Node Rollout
 
 Poll every 60 seconds until all nodes show the target version:
@@ -248,6 +303,37 @@ On PASS, proceed to Phase 5.
 ---
 
 ## Phase 5: Karpenter Nodes (If Applicable)
+
+### 5-0. Launch Sub-Agent Drain Monitor
+
+Before Karpenter node replacement begins, launch a Sub-Agent in parallel to watch events in real time.
+
+**Sub-Agent instructions:**
+- Run the following command to watch Warning events across all namespaces (same as Phase 4):
+  ```bash
+  kubectl get events -A --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- Watch NodeClaim status in parallel:
+  ```bash
+  kubectl get nodeclaims --watch \
+    -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
+  ```
+- Report to the main agent immediately and record to audit.log when any of these events are detected:
+  - All Phase 4 targets (`FailedDrain`, `DisruptionBlocked`, `ExceededGracePeriod`, `FailedKillPod`)
+  - `NodeClaimNotFound` → report NodeClaim loss
+  - `NodeClaimTerminationFailed` → report NodeClaim termination failure
+- Record to audit.log by calling the script:
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P5" \
+    --result "WARN" \
+    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
+  ```
+- Use `--result "FAIL"` when `FailedDrain` or `NodeClaimTerminationFailed` is detected
+- **Read-only** — never run any write or delete commands
+- Terminate immediately when the main agent signals Phase 5 complete
 
 ### 5-1. Monitor Karpenter Node Replacement
 
