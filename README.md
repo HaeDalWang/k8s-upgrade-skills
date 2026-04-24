@@ -22,6 +22,8 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
 - `recipe.yaml` 기반 플랫폼/IaC 자동 라우팅 — 환경에 맞는 Sub-Skill 자동 선택
 - recipe 스키마 검증 (`scripts/validate_recipe.py`) — 파싱 실패를 사전 차단
+- **병렬 Sub-Agent 드레인 모니터** (로드맵 2 ✅): terraform apply 실행과 동시에 Sub-Agent가 `kubectl get events`로 드레인 이벤트 실시간 감시. 감지 이벤트는 `audit_event.py`를 통해 audit.log에 기록
+- **Service-Aware Sub-Agent** (로드맵 1 ✅): 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 실시간 감시 (BestEffort)
 
 ## 해당 스킬이 하지 않는 것
 
@@ -36,22 +38,13 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 - Self-managed Node Group / Fargate 프로파일 업그레이드
 - 현재 지원하지 않는 플랫폼/IaC 조합 (개발 현황 참조)
 
-## 로드맵: 지능형 관측성 및 게이트 강화 (Priority 1)
+## 로드맵
 
-현재의 Phase-gated 방식을 고도화하여, 인프라 상태(Ready)뿐만 아니라 실제 서비스 가용성(Endpoint)을 기준으로 업그레이드 진행 여부를 결정하는 것을 최우선 목표로 합니다.
-
-### 1. 애플리케이션 가용성 기반 검증 (Service-Aware Gate)
-- **현상:** 노드가 `Ready` 상태여도 Ingress/Service/HTTPRoute 등 네트워크 객체의 엔드포인트 전파 지연으로 인해 일시적인 서비스 단절(5xx 에러)이 발생할 수 있음.
-- **개선:** recipe.md에 정의된 핵심 서비스(Service, Ingress, HTTPRoute)를 추적하여, 신규 노드 배치 후 엔드포인트(EndpointSlice) 가용 IP가 타겟 수치에 도달하고 실제 헬스체크 응답이 정상인 경우에만 다음 노드로 진행.
-
-### 2. 병렬 Sub-Agent 기반 실시간 드레인(Drain) 모니터링
-- **현상:** Terraform 실행 중 특정 Pod가 PDB 위반이나 Graceful Termination 실패로 드레인 프로세스에서 무한 대기하며 타임아웃을 유발함.
-- **개선:** IaC 실행과 동시에 Sub-Agent를 병렬 투입하여 `kubectl get events -w` 과 같은 명령어로 드레인 프로세스를 실시간 감시.
-  - 드레인 지연/실패 원인(예: PDB 교착 상태, 로컬 스토리지 점유 등)을 즉각 감지하여 사용자에게 보고 및 인터랙티브 대응 가이드 제시.
-
-### 3. 고도화된 폴백(Fallback) 메커니즘
-- **현상** 업그레이드 실패 시 원인 파악을 위해 수동으로 로그를 수집해야 하는 번거로움 존재.
-- **개선** 검증 게이트 미통과 시 즉시 중단 및 **실패 시점의 클러스터 상태 스냅샷(Events, Pod Status, IaC Plan 결과)**을 자동 저장하여 AI Agent가 즉각적인 근원 분석(RCA) 리포트 제공.
+| # | 기능 | 상태 |
+|---|------|------|
+| 1 | **Service-Aware Sub-Agent** — 노드 교체 중 EndpointSlice + HTTP 헬스체크로 서비스 가용성 실시간 감시 | ✅ 완료 |
+| 2 | **병렬 Sub-Agent 드레인 모니터** — terraform apply와 동시에 드레인 이벤트 실시간 감시 및 audit.log 기록 | ✅ 완료 |
+| 3 | **고도화된 폴백 메커니즘** — 실패 시점 클러스터 상태 스냅샷 자동 저장 + AI RCA 리포트 | 📋 계획됨 |
 
 ## 개발 현황
 
@@ -69,8 +62,9 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 git clone https://github.com/HaeDalWang/k8s-upgrade-skills.git
 cd k8s-upgrade-skills
 ./install.sh
-# 2. 쿠버네티스를 관리하는 프로젝트 디렉토리의 recipe.yaml 작성
-# 3. AI Agent에게 요청: "클러스터를 업그레이드해줘"
+# 2. 쿠버네티스를 관리하는 프로젝트 디렉토리에서 AI Agent에게 요청
+# "EKS 클러스터를 업그레이드해줘"
+# → recipe.yaml이 없으면 Agent가 필요한 정보를 물어보고 자동 생성
 ```
 
 > 테스트할 Kubernetes 클러스터가 없다면? [example/terraform-eks/](example/terraform-eks/)에 EKS + Karpenter 참조 인프라와 위험 시나리오 샘플이 포함되어 있습니다. Terraform으로 바로 배포하고 스킬을 테스트해볼 수 있습니다.
@@ -83,6 +77,7 @@ cd k8s-upgrade-skills
 ./install.sh                  # 인터랙티브 — 도구 선택
 ./install.sh --tool claude    # 특정 도구만 설치
 ./install.sh --all            # 모든 도구에 설치
+./install.sh --force          # 재설치(업데이트)
 ./install.sh --status         # 설치 상태 확인
 ./install.sh --uninstall      # 전체 제거
 ```
@@ -100,9 +95,11 @@ cd k8s-upgrade-skills
 | Antigravity | `~/.agent/skills/k8s-upgrade-skills/` |
 | GitHub Copilot | `~/.github/skills/k8s-upgrade-skills/` |
 
-### recipe.yaml 작성 (권장)
+### recipe.yaml 작성
 
-Kubernetes를 관리하는 프로젝트 루트에 `recipe.yaml`을 만들고 클러스터 정보를 채웁니다:
+`recipe.yaml`이 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성합니다. 이미 있으면 그대로 재사용합니다.
+
+직접 작성하려면 프로젝트 루트에 아래 형식으로 만드세요:
 
 ```yaml
 environment: aws          # aws | on-prem
@@ -125,7 +122,7 @@ services:
   - name: my-worker
     namespace: production
     min_endpoints: 1
-    # health_check_url 없음 → BestEffort 모드
+    # health_check_url 없음 → BestEffort 모드 (EndpointSlice만 확인)
 ```
 
 > **Service-Aware Gate 한계 안내**
@@ -161,6 +158,7 @@ services:
       "Bash(python3 k8s-upgrade-skills/scripts/validate_recipe.py:*)",
       "Bash(python3 k8s-upgrade-skills/scripts/gate_check.py:*)",
       "Bash(python3 k8s-upgrade-skills/scripts/phase_gate.py:*)",
+      "Bash(python3 k8s-upgrade-skills/scripts/audit_event.py:*)",
       "Bash(kubectl get:*)",
       "Bash(kubectl describe:*)",
       "Bash(kubectl patch:*)",
@@ -187,10 +185,10 @@ graph TD
     B0 -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
     USER_CONFIRM -- "승인" --> C
     USER_CONFIRM -- "거부" --> STOP
-    C -- "Gate: 버전/AMI 값 반영 확인" --> D[Phase 2: Control Plane 업그레이드]
+    C -- "Gate: 버전/AMI 값 반영 확인" --> D["Phase 2: Control Plane 업그레이드\n+ Sub-Agent: kube-system 이벤트 감시"]
     D -- "Gate: CP status=ACTIVE, 목표 버전 도달" --> E[Phase 3: Add-on 검증]
-    E -- "Gate: 모든 Add-on ACTIVE" --> F[Phase 4: Data Plane 업그레이드]
-    F -- "Gate: 전체 노드 Ready, 목표 버전" --> G[Phase 5: 오토스케일러 노드 교체]
+    E -- "Gate: 모든 Add-on ACTIVE" --> F["Phase 4: Data Plane 업그레이드\n+ Sub-Agent: 드레인 이벤트 + 서비스 가용성 감시"]
+    F -- "Gate: 전체 노드 Ready, 목표 버전" --> G["Phase 5: 오토스케일러 노드 교체\n+ Sub-Agent: 드레인 이벤트 + 서비스 가용성 감시"]
     G -- "Gate: Drift 교체 완료, 전 노드 Ready" --> H[Phase 6: IaC 전체 동기화]
     H -- "Gate: plan에 예상치 못한 변경 없음" --> I[Phase 7: 최종 검증 및 보고서]
     I -- "Gate: unhealthy Pod 0개" --> J[완료]
@@ -218,21 +216,28 @@ graph TD
 ```
 ├── k8s-upgrade-skills/                 # AI Agent 스킬 정의 (핵심)
 │   ├── SKILL.md                        #   루트 라우터 — recipe 검증 + Sub-Skill 분기
-│   ├── scripts/                        #   검증 스크립트 (스킬 내 포함)
-│   │   ├── lib.py                     #     공통 헬퍼 모듈 (gate_check.py, phase_gate.py 공유)
-│   │   ├── gate_check.py             #     Phase 0 독립 검증 (exit code로 Gate 제어)
-│   │   ├── phase_gate.py             #     Phase 2~7 Gate 검증 (exit code로 Gate 제어)
-│   │   └── validate_recipe.py         #     recipe.yaml 스키마 검증
-│   └── aws/terraform-eks/              #   EKS + Terraform 업그레이드 스킬
-│       ├── SKILL.md                    #     Phase 0~7 실행 절차
+│   ├── scripts/
+│   │   ├── lib.py                      #     공통 헬퍼 (_gate 단일 진실 원천, audit 함수)
+│   │   ├── gate_check.py               #     Phase 0 독립 검증 (exit code로 Gate 제어)
+│   │   ├── phase_gate.py               #     Phase 2~7 Gate 검증 (exit code로 Gate 제어)
+│   │   ├── validate_recipe.py          #     recipe.yaml 스키마 검증 (services 필드 포함)
+│   │   └── audit_event.py              #     Sub-Agent용 단일 이벤트 audit.log 기록 CLI
+│   ├── schemas/
+│   │   └── recipe.schema.json          #     recipe.yaml IDE 스키마 (VSCode/Kiro)
+│   └── aws/terraform-eks/
+│       ├── SKILL.md                    #     Phase 0~7 실행 절차 + Sub-Agent 투입 지시
 │       └── reference.md               #     보고서 템플릿, 중단 조건
-├── docs/                               # 운영 문서
+├── docs/
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
-│   └── failure-runbook.md             #   실패 시나리오별 대응 절차
+│   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (Sub-Agent 보고 해석 포함)
 ├── example/terraform-eks/              # EKS + Karpenter 참조 Terraform 코드
-│   ├── recipe.yaml                    #   업그레이드 요구사항 예제 (권장 형식)
-│   ├── recipe.md                      #   업그레이드 요구사항 예제 (하위 호환)
+│   ├── recipe.yaml                    #   업그레이드 요구사항 예제 (services 필드 포함)
 │   └── terraform/                     #   eks.tf, network.tf, yamls/ 등
-├── install.sh                          # 전역 설치 스크립트
+├── tests/
+│   ├── test_gate_check.py             #   gate_check.py 단위 테스트
+│   ├── test_phase_gate.py             #   phase_gate.py 단위 테스트
+│   ├── test_audit_event.py            #   audit_event.py 단위 테스트
+│   └── test_validate_recipe.py        #   validate_recipe.py 단위 테스트 (services 포함)
+├─ install.sh                          # 전역 설치 스크립트
 └── README.md
 ```
