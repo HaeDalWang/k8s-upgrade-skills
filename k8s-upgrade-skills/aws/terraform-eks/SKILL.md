@@ -154,7 +154,30 @@ Review the plan output:
 - `aws_eks_node_group` release_version change → Expected (rolling update)
 - Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
 
-### 2-2. Targeted Apply
+### 2-2. Sub-Agent 드레인 모니터 투입
+
+terraform apply 실행 전, Sub-Agent를 병렬로 투입하여 kube-system 이벤트를 실시간 감시한다.
+
+**Sub-Agent 지시:**
+- 아래 명령어를 실행하여 Warning 이벤트를 감시한다:
+  ```bash
+  kubectl get events -n kube-system --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- 아래 이벤트 감지 시 즉시 메인 에이전트에 보고하고, audit.log에 기록한다:
+  - `FailedMount`, `BackOff`, `OOMKilling`, `NodeNotReady`
+- audit.log 기록 방법 (스크립트 호출):
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P2" \
+    --result "WARN" \
+    --detail "<REASON>: <OBJ> — <MSG>"
+  ```
+- **읽기 전용** — 어떤 수정/삭제 명령도 실행 금지
+- 메인 에이전트가 Phase 2 완료 신호를 보내면 즉시 종료
+
+### 2-3. Targeted Apply
 
 ```bash
 cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
@@ -218,6 +241,38 @@ Interpret exit code per convention table. On PASS, proceed to Phase 4.
 
 The targeted apply in Phase 2 triggers MNG rolling update automatically. Monitor until complete.
 
+### 4-0. Sub-Agent 드레인 모니터 투입
+
+노드 롤링 시작 전, Sub-Agent를 병렬로 투입하여 드레인 이벤트를 실시간 감시한다.
+
+**Sub-Agent 지시:**
+- 아래 명령어를 실행하여 전체 네임스페이스 Warning 이벤트를 감시한다:
+  ```bash
+  kubectl get events -A --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- 30초마다 PDB 상태를 확인한다:
+  ```bash
+  kubectl get pdb -A \
+    -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed,DESIRED:.status.desiredHealthy,CURRENT:.status.currentHealthy'
+  ```
+- 아래 이벤트 감지 시 즉시 메인 에이전트에 보고하고, audit.log에 기록한다:
+  - `FailedDrain` → 즉시 중단 요청 + PDB 상태 함께 보고
+  - `DisruptionBlocked` → PDB 교착 상태 보고
+  - `ExceededGracePeriod` → Graceful Termination 실패 보고
+  - `FailedKillPod` → Pod 강제 종료 실패 보고
+- audit.log 기록 방법 (스크립트 호출):
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P4" \
+    --result "WARN" \
+    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
+  ```
+- `FailedDrain` 감지 시 result를 `FAIL`로 기록하고 메인 에이전트에 즉시 중단 요청
+- **읽기 전용** — 어떤 수정/삭제 명령도 실행 금지
+- 메인 에이전트가 Phase 4 완료 신호를 보내면 즉시 종료
+
 ### 4-1. Monitor Node Rollout
 
 Poll every 60 seconds until all nodes show the target version:
@@ -248,6 +303,37 @@ On PASS, proceed to Phase 5.
 ---
 
 ## Phase 5: Karpenter Nodes (If Applicable)
+
+### 5-0. Sub-Agent 드레인 모니터 투입
+
+Karpenter 노드 교체 시작 전, Sub-Agent를 병렬로 투입하여 이벤트를 실시간 감시한다.
+
+**Sub-Agent 지시:**
+- 아래 명령어를 실행하여 전체 네임스페이스 Warning 이벤트를 감시한다 (Phase 4와 동일):
+  ```bash
+  kubectl get events -A --watch --field-selector type=Warning \
+    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
+  ```
+- NodeClaim 상태를 병행 감시한다:
+  ```bash
+  kubectl get nodeclaims --watch \
+    -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
+  ```
+- 아래 이벤트 감지 시 즉시 메인 에이전트에 보고하고, audit.log에 기록한다:
+  - Phase 4 감지 대상 전체 (`FailedDrain`, `DisruptionBlocked`, `ExceededGracePeriod`, `FailedKillPod`)
+  - `NodeClaimNotFound` → Karpenter NodeClaim 소실 보고
+  - `NodeClaimTerminationFailed` → NodeClaim 종료 실패 보고
+- audit.log 기록 방법 (스크립트 호출):
+  ```bash
+  python3 scripts/audit_event.py \
+    --audit-log audit.log \
+    --rule-id "DRAIN-P5" \
+    --result "WARN" \
+    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
+  ```
+- `FailedDrain` 또는 `NodeClaimTerminationFailed` 감지 시 result를 `FAIL`로 기록
+- **읽기 전용** — 어떤 수정/삭제 명령도 실행 금지
+- 메인 에이전트가 Phase 5 완료 신호를 보내면 즉시 종료
 
 ### 5-1. Monitor Karpenter Node Replacement
 
