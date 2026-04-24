@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "K8s Upgrade Recipe",
+  "type": "object",
+  "required": ["environment", "platform", "iac", "cluster_name", "current_version", "target_version"],
+  "additionalProperties": false,
+  "properties": {
+    "environment": { "type": "string", "enum": ["aws", "on-prem"] },
+    "platform":    { "type": "string", "enum": ["eks", "kubespray"] },
+    "iac":         { "type": "string", "enum": ["terraform", "none"] },
+    "cluster_name":      { "type": "string", "minLength": 1 },
+    "current_version":   { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+    "target_version":    { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+    "output_language":   { "type": "string", "enum": ["ko", "en"] },
+    "notes":             { "type": "string" },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "namespace", "min_endpoints"],
+        "additionalProperties": false,
+        "properties": {
+          "name":             { "type": "string", "minLength": 1 },
+          "namespace":        { "type": "string", "minLength": 1 },
+          "min_endpoints":    { "type": "integer", "minimum": 1 },
+          "health_check_url": { "type": "string", "pattern": "^https?://" }
+        }
+      }
+    }
+  }
+}
