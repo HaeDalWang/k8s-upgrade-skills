@@ -3,8 +3,8 @@
 # 용도: drain 후 PV 재연결 + 데이터 유지 검증
 #       업그레이드 중 StatefulSet이 정상적으로 재스케줄되는지 확인
 #
-# 확인: kubectl exec -n upgrade-test valkey-0 -- valkey-cli SET test "hello"
-#       (drain 후) kubectl exec -n upgrade-test valkey-0 -- valkey-cli GET test
+# 확인: kubectl exec -n workload valkey-0 -- valkey-cli SET test "hello"
+#       (drain 후) kubectl exec -n workload valkey-0 -- valkey-cli GET test
 #       → "hello" 반환되면 데이터 유지 성공
 ---
 apiVersion: apps/v1

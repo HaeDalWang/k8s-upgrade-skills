@@ -3,7 +3,7 @@
 # 용도: Valkey에 1초 간격 PING → 응답 실패 시 타임스탬프 기록
 #       업그레이드 후 로그로 downtime 구간 확인
 #
-# 확인: kubectl logs -n upgrade-test deploy/traffic-generator --tail=50
+# 확인: kubectl logs -n workload deploy/traffic-generator --tail=50
 #       → status=FAIL 구간이 downtime
 ---
 apiVersion: apps/v1

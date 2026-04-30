@@ -8,7 +8,7 @@
 #
 # 구성: resource-hog (request 작음, limit 큼) + stress-injector (부하 생성)
 #
-# 재현: 배포 후 kubectl top pods -n upgrade-risk-demo 로 실제 사용량 확인
+# 재현: 배포 후 kubectl top pods -n workload 로 실제 사용량 확인
 #       → request 대비 실제 사용량이 10배 이상 → drain 시 노드 과부하
 #
 # 조치: request를 실제 사용량에 맞게 상향하거나, LimitRange/ResourceQuota 적용
@@ -86,7 +86,7 @@ spec:
               while true; do
                 # resource-hog에 HTTP 요청 폭주
                 for i in $(seq 1 50); do
-                  wget -q -O /dev/null http://resource-hog.upgrade-risk-demo.svc.cluster.local/ &
+                  wget -q -O /dev/null http://resource-hog.workload.svc.cluster.local/ &
                 done
                 wait
                 # 자체 CPU 소모 (연산 루프)
