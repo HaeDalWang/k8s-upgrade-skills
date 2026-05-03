@@ -32,8 +32,7 @@ module "eks" {
       most_recent    = true
     }
     coredns = {
-      before_compute = true
-      most_recent    = true
+      most_recent = true
       configuration_values = jsonencode({
         nodeSelector = {
           workload  = "system"
@@ -159,6 +158,8 @@ resource "kubernetes_namespace_v1" "karpenter" {
   metadata {
     name = "karpenter"
   }
+
+  depends_on = [module.eks]
 }
 
 # Karpenter CRDs
@@ -300,7 +301,6 @@ resource "kubectl_manifest" "karpenter_default_nodepool" {
 # EKS-Addon
 locals {
   eks_addons = [
-    "metrics-server",
     "aws-ebs-csi-driver",
     "eks-pod-identity-agent",
     "aws-secrets-store-csi-driver-provider"
@@ -372,6 +372,8 @@ resource "kubernetes_storage_class_v1" "ebs_sc" {
     type      = "gp3"
     encrypted = "true"
   }
+
+  depends_on = [module.eks]
 }
 
 resource "kubernetes_storage_class_v1" "ebs_sc_retain" {
@@ -388,6 +390,8 @@ resource "kubernetes_storage_class_v1" "ebs_sc_retain" {
     type      = "gp3"
     encrypted = "true"
   }
+
+  depends_on = [module.eks]
 }
 
 resource "kubernetes_annotations" "default_storageclass" {
@@ -441,6 +445,18 @@ resource "helm_release" "aws_load_balancer_controller" {
         eks.amazonaws.com/role-arn: ${module.aws_load_balancer_controller_pod_identity.iam_role_arn}
     EOT
   ]
+
+  depends_on = [
+    kubectl_manifest.karpenter_default_nodepool
+  ]
+}
+
+resource "helm_release" "metrics_server" {
+  name       = "metrics-server"
+  repository = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart      = "metrics-server"
+  version    = var.metrics_server_chart_version
+  namespace  = "kube-system"
 
   depends_on = [
     kubectl_manifest.karpenter_default_nodepool

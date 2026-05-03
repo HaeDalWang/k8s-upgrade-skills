@@ -27,3 +27,8 @@ variable "argocd_chart_version" {
   description = "Argo CD 차트 버전"
   type        = string
 }
+
+variable "metrics_server_chart_version" {
+  description = "Metrics Server 차트 버전"
+  type        = string
+}
