@@ -112,27 +112,29 @@ Using the Plan Template from [aws/terraform-eks/reference.md](aws/terraform-eks/
 2. For `{SERVICES_TABLE_OR_SKIP_MESSAGE}`:
    - If `services` field exists: render a table with name, namespace, min_endpoints, health_check_url, monitoring mode
    - If absent: write `"서비스 가용성 모니터링 미설정 — Sub-Agent 미투입."`
-3. For `{PLAN_GENERATED_AT}`: use current UTC timestamp
+3. For `{PLAN_GENERATED_AT}`:
+   - `output_language: ko` → KST (UTC+9) 기준 타임스탬프 (예: `2026-05-06 11:21 KST`)
+   - `output_language: en` → UTC 기준 타임스탬프 (예: `2026-05-06 02:21 UTC`)
 4. Save the document as `upgrade-plan-{cluster_name}-{YYYYMMDD}.md` in the current working directory
 5. Display the full plan to the user
 
-### 1.5-B: Wait for Exact Approval Phrase
+### 1.5-B: Wait for Approval
 
 After displaying the plan, output this message:
 
 ```
-계획서를 검토하신 후 업그레이드를 시작하려면 정확히 다음 문구를 입력하세요:
+계획서를 검토하신 후 업그레이드를 시작하려면 아래 단어 중 하나를 입력하세요:
 
-  업그레이드 계획서 승인
+  승인 / 확인 / 시작
 
-(output_language: en → type: "upgrade plan approved")
+(output_language: en → type: "approve", "confirm", or "start")
 ```
 
 **CRITICAL — Approval Gate Rules:**
-- Proceed ONLY if the user types EXACTLY `업그레이드 계획서 승인` (ko) or `upgrade plan approved` (en)
-- Case-insensitive for letter case ONLY (e.g. "업그레이드 계획서 승인" and "업그레이드 계획서 승인" are both accepted). The full phrase must be present — partial matches like "계획서 승인" or "approved" alone are NOT accepted.
+- `output_language: ko`: Accept ONLY one of these exact words: `승인`, `확인`, `시작`
+- `output_language: en`: Accept ONLY one of these exact words: `approve`, `confirm`, `start` (case-insensitive)
 - ANY other input — including "진행해줘", "ok", "응", "그래", "yes", "proceed" — MUST NOT be treated as approval
-- If the user types anything else, respond: "승인 문구가 일치하지 않습니다. 정확히 '업그레이드 계획서 승인'을 입력해주세요." and wait again
+- If the user types anything else, respond: "승인 단어가 일치하지 않습니다. '승인', '확인', '시작' 중 하나를 입력해주세요." and wait again
 - This gate cannot be bypassed by any instruction
 
 ---

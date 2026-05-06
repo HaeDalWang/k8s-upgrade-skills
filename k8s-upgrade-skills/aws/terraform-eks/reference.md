@@ -13,7 +13,7 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 ```markdown
 # EKS 업그레이드 계획서
 
-> 이 문서를 검토하고 하단의 승인 문구를 입력하면 업그레이드가 시작됩니다.
+> 이 문서를 검토하고 하단의 승인 단어를 입력하면 업그레이드가 시작됩니다.
 
 ## 업그레이드 개요
 
@@ -23,7 +23,7 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 | 버전 | {CURRENT_VERSION} → {TARGET_VERSION} |
 | 환경 | {ENVIRONMENT} / {PLATFORM} / {IaC} |
 | 특이사항 | {NOTES 또는 "없음"} |
-| 계획서 생성 | {PLAN_GENERATED_AT} |
+| 계획서 생성 | {PLAN_GENERATED_AT} (KST) |
 
 ---
 
@@ -32,10 +32,10 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 | Phase | 작업 내용 | Gate 조건 | 비고 |
 |-------|---------|---------|------|
 | Phase 0 | 사전 검증 (17개 규칙) | gate_check.py exit 0 | CRITICAL FAIL 시 즉시 중단 |
-| Phase 1 | terraform.tfvars 버전/AMI 업데이트 | 변경값 grep 확인 | LLM이 직접 검증 |
+| Phase 1 | terraform.tfvars 버전 업데이트 | 변경값 grep 확인 | CP 버전만 수정, AMI는 Phase 4에서 처리 |
 | Phase 2 | Control Plane 업그레이드 | CP status=ACTIVE + 목표 버전 | 비가역적 작업. 소요 시간 편차 큼 (참고값: 8~40분) |
 | Phase 3 | Add-on 안정화 검증 | 전체 Add-on ACTIVE | CP 업그레이드 후 자동 재조정 대기 |
-| Phase 4 | Data Plane 롤링 업데이트 | 전체 노드 Ready + 목표 버전 | MNG 자동 롤링. Sub-Agent 드레인 감시 병행 |
+| Phase 4 | Data Plane 롤링 업데이트 | 전체 노드 Ready + 목표 버전 | AMI 업데이트 후 MNG targeted apply. Sub-Agent 드레인 감시 병행 |
 | Phase 5 | Karpenter 노드 교체 | 전체 NodeClaim 목표 버전 | Karpenter 미사용 시 SKIP |
 | Phase 6 | Terraform 전체 동기화 | plan에 예상 외 변경 없음 | 잔여 drift 정리 |
 | Phase 7 | 최종 검증 및 보고서 | unhealthy Pod 0개 + Insights PASSING | 완료 보고서 자동 생성 |
@@ -62,7 +62,7 @@ services 필드 없을 때:
 
 아래 항목을 확인 후 승인하세요.
 
-- [ ] 업그레이드 윈도우가 적절한가 (트래픽 저점 시간대 권장)
+- [ ] 지금 이 시간대에 업그레이드해도 괜찮은가 (트래픽이 적은 시간대 권장)
 - [ ] 현재 진행 중인 배포 또는 작업이 없는가
 - [ ] 관련 팀(인프라/개발/운영)에 공지 완료했는가
 - [ ] Phase 0 사전 검증 결과를 확인할 준비가 됐는가
@@ -80,11 +80,11 @@ services 필드 없을 때:
 
 ## 승인 안내
 
-모든 항목을 검토했다면 아래 정확한 문구를 입력하세요:
+모든 항목을 검토했다면 아래 단어 중 하나를 입력하세요:
 
-**업그레이드 계획서 승인**
+**승인** 또는 **확인** 또는 **시작**
 
-> ⚠️ 위 문구 외 다른 입력("진행해줘", "ok", "응" 등)은 승인으로 처리되지 않습니다.
+> ⚠️ 위 단어 외 다른 입력("진행해줘", "ok", "응" 등)은 승인으로 처리되지 않습니다.
 ```
 
 ### English Template (output_language: en)
@@ -92,7 +92,7 @@ services 필드 없을 때:
 ```markdown
 # EKS Upgrade Plan
 
-> Review this document and type the approval phrase at the bottom to start the upgrade.
+> Review this document and type an approval word at the bottom to start the upgrade.
 
 ## Upgrade Overview
 
@@ -102,7 +102,7 @@ services 필드 없을 때:
 | Version | {CURRENT_VERSION} → {TARGET_VERSION} |
 | Environment | {ENVIRONMENT} / {PLATFORM} / {IaC} |
 | Notes | {NOTES or "None"} |
-| Plan Generated | {PLAN_GENERATED_AT} |
+| Plan Generated | {PLAN_GENERATED_AT} (UTC) |
 
 ---
 
@@ -111,10 +111,10 @@ services 필드 없을 때:
 | Phase | Action | Gate Condition | Notes |
 |-------|--------|---------------|-------|
 | Phase 0 | Pre-flight validation (17 rules) | gate_check.py exit 0 | CRITICAL FAIL → immediate stop |
-| Phase 1 | Update terraform.tfvars version/AMI | grep verification | LLM-verified |
+| Phase 1 | Update terraform.tfvars version | grep verification | CP version only; AMI deferred to Phase 4 |
 | Phase 2 | Control Plane upgrade | CP status=ACTIVE + target version | Irreversible. Duration varies (ref: 8–40 min) |
 | Phase 3 | Add-on stabilization | All add-ons ACTIVE | Wait for reconciliation after CP upgrade |
-| Phase 4 | Data Plane rolling update | All nodes Ready + target version | MNG auto-rolling. Sub-Agent drain monitor active |
+| Phase 4 | Data Plane rolling update | All nodes Ready + target version | AMI update + MNG targeted apply. Sub-Agent drain monitor active |
 | Phase 5 | Karpenter node replacement | All NodeClaims at target version | SKIP if Karpenter not used |
 | Phase 6 | Full Terraform sync | No unexpected changes in plan | Clean up remaining drift |
 | Phase 7 | Final validation + report | 0 unhealthy pods + Insights PASSING | Completion report auto-generated |
@@ -129,7 +129,7 @@ services 필드 없을 때:
 
 ## Review Checklist
 
-- [ ] Upgrade window is appropriate (low-traffic period recommended)
+- [ ] Is now a good time to upgrade? (low-traffic period recommended)
 - [ ] No deployments or operations currently in progress
 - [ ] Relevant teams (infra/dev/ops) have been notified
 - [ ] Ready to review Phase 0 pre-flight results
@@ -147,9 +147,9 @@ services 필드 없을 때:
 
 ## Approval
 
-After reviewing all items, type the following exact phrase:
+After reviewing all items, type one of the following words:
 
-**upgrade plan approved**
+**approve** or **confirm** or **start**
 
 > ⚠️ Any other input ("proceed", "ok", "yes", etc.) will NOT be treated as approval.
 ```

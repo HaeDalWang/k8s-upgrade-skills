@@ -72,7 +72,9 @@ AI Agent가 사용하는 자격 증명(IAM User/Role, kubeconfig)에 아래 권�
         "eks:UpdateClusterVersion",
         "eks:UpdateNodegroupVersion",
         "eks:UpdateNodegroupConfig",
-        "eks:UpdateAddon"
+        "eks:UpdateAddon",
+        "eks:ListNodegroups",
+        "eks:DescribeNodegroup"
       ],
       "Resource": [
         "arn:aws:eks:*:*:cluster/${CLUSTER_NAME}",
@@ -177,6 +179,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["delete"]
+  # EndpointSlice 감시 (Service-Aware Sub-Agent)
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
   # Karpenter 리소스
   - apiGroups: ["karpenter.sh"]
     resources: ["nodepools", "nodeclaims"]

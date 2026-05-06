@@ -139,14 +139,18 @@ def _parse_service_value(v: str) -> str:
     v = v.strip()
     if not v:
         return ""
-    if not (v.startswith('"') or v.startswith("'")):
-        for i, ch in enumerate(v):
-            if ch == '#':
-                v = v[:i].strip()
-                break
-    if (v.startswith('"') and v.endswith('"')) or \
-       (v.startswith("'") and v.endswith("'")):
-        v = v[1:-1]
+    # Quoted value: find the closing quote, ignore anything after it
+    if v.startswith('"') or v.startswith("'"):
+        quote = v[0]
+        close = v.find(quote, 1)
+        if close != -1:
+            return v[1:close]
+        return v[1:]  # unclosed quote — strip leading quote only
+    # Unquoted value: strip inline comment
+    for i, ch in enumerate(v):
+        if ch == '#':
+            v = v[:i].strip()
+            break
     return v
 
 

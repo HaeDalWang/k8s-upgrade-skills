@@ -98,7 +98,7 @@ The script checks these 17 rules:
 - INF-003: Karpenter compatibility (conditional on CRD existence)
 - INF-004: Terraform recreate detection (requires --tf-dir)
 
-Audit log (`audit.log`) is written by the script in **append mode** — each phase appends its records without overwriting previous phases. The LLM reads it but does not write to it.
+Audit log (`audit.log`) is written by the script in **append mode** — each phase appends its records without overwriting previous phases. The LLM reads it but does not write to it directly — use `scripts/audit_event.py` to append LLM-side events.
 
 ---
 
@@ -124,20 +124,33 @@ grep -rE 'module\s+"[^"]*"' "${TF_DIR}"/*.tf | grep -iE 'eks|cluster'
 grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
 ```
 
-### 1-4. Update Values
+Save the current values as `OLD_CLUSTER_VERSION` and `OLD_AMI_*` for audit recording.
 
-Update these variables in `${TF_DIR}/terraform.tfvars`:
+### 1-4. Update eks_cluster_version Only
+
+Update **only** `eks_cluster_version` in `${TF_DIR}/terraform.tfvars`:
 - `eks_cluster_version` → `"${TARGET_VERSION}"`
-- Each `eks_node_ami_alias_*` → latest value for TARGET_VERSION
-- Only update variables that actually exist in the file
+- **DO NOT update `eks_node_ami_alias_*` here** — AMI updates are deferred to Phase 4 to prevent MNG from rolling before the Control Plane is upgraded.
 
 ### 1-5. Verify Update
 
 ```bash
-grep -E 'eks_cluster_version|eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
+grep -E 'eks_cluster_version' "${TF_DIR}/terraform.tfvars"
 ```
 
-**Gate**: All values reflect the target version. Report before/after diff to user.
+Confirm `eks_cluster_version` reflects `TARGET_VERSION`. Confirm `eks_node_ami_alias_*` is **unchanged**.
+
+**Gate**: `eks_cluster_version` = TARGET_VERSION. Report before/after diff to user.
+
+### 1-6. Record to audit.log
+
+```bash
+python3 scripts/audit_event.py \
+  --audit-log audit.log \
+  --rule-id "PHASE1-TFVARS" \
+  --result "PASS" \
+  --detail "eks_cluster_version: ${OLD_CLUSTER_VERSION} → ${TARGET_VERSION} (AMI update deferred to Phase 4)"
+```
 
 ---
 
@@ -151,7 +164,9 @@ cd "${TF_DIR}" && terraform plan -target=${EKS_MODULE} 2>&1 | tail -60
 
 Review the plan output:
 - `aws_eks_cluster` version change → Expected
-- `aws_eks_node_group` release_version change → Expected (rolling update)
+- `aws_eks_addon` version change → Expected
+- `time_sleep` replace → Expected
+- `aws_eks_node_group` changes → **STOP**: If MNG appears in the plan, `eks_node_ami_alias_*` was accidentally modified in Phase 1. Revert it before proceeding.
 - Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
 
 ### 2-2. Launch Sub-Agent Drain Monitor
@@ -179,11 +194,42 @@ Before running terraform apply, launch a Sub-Agent in parallel to watch kube-sys
 
 ### 2-3. Targeted Apply
 
+Run in background so polling can proceed in parallel:
+
 ```bash
 cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
 ```
 
-This typically takes 8–15 minutes.
+This typically takes 8–40 minutes for the Control Plane. The MNG rolling update may also be triggered if it was already pending — monitor below.
+
+### 2-3-b. Terraform Apply Timeout Handling
+
+While the apply runs in background, poll every 60 seconds:
+
+```bash
+aws eks describe-cluster --name "${CLUSTER_NAME}" \
+  --query 'cluster.{version:version, status:status}' --output json
+```
+
+**If apply has been running for 30+ minutes AND cluster is already `ACTIVE` + `TARGET_VERSION`:**
+
+1. Check MNG status:
+   ```bash
+   aws eks list-nodegroups --cluster-name "${CLUSTER_NAME}" --output json | \
+     jq -r '.nodegroups[]' | while read ng; do
+       aws eks describe-nodegroup --cluster-name "${CLUSTER_NAME}" --nodegroup-name "$ng" \
+         --query '{name:nodegroup.nodegroupName, status:nodegroup.status, version:nodegroup.version}' --output json
+     done
+   ```
+
+2. If ALL nodegroups are `ACTIVE` + `TARGET_VERSION`:
+   - Stop the background terraform apply process (TaskStop)
+   - Run `terraform apply -auto-approve` (no target) to clean up any deposed resources
+   - Proceed to Phase 2 gate
+
+3. If any nodegroup is still `UPDATING`: continue waiting (re-check every 10 minutes)
+
+4. If cluster is still `UPDATING`: continue waiting (re-check every 60 seconds)
 
 ### 2-4. Poll Until Complete
 
@@ -237,9 +283,11 @@ Interpret exit code per convention table. On PASS, proceed to Phase 4.
 
 ---
 
-## Phase 4: Data Plane (Managed Node Group) Monitoring
+## Phase 4: Data Plane (Managed Node Group) Rolling Update
 
-The targeted apply in Phase 2 triggers MNG rolling update automatically. Monitor until complete.
+Phase 4 has two parts:
+1. **4-A**: Update AMI alias in tfvars and apply MNG rolling update via Terraform
+2. **4-B**: Monitor rollout and verify via gate script
 
 ### 4-0. Launch Sub-Agent Drain Monitor
 
@@ -335,16 +383,74 @@ If `services` is defined, launch a second Sub-Agent in parallel to monitor servi
 - **Read-only** — never run any write or delete commands
 - Terminate immediately when the main agent signals Phase 4 complete
 
-### 4-1. Monitor Node Rollout
+### 4-1. Update AMI Alias (Data Plane Only)
 
-Poll every 60 seconds until all nodes show the target version:
+Read the current AMI alias values:
+
+```bash
+grep -E 'eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
+```
+
+Query the latest AMI version for TARGET_VERSION from SSM:
+
+```bash
+# Bottlerocket
+aws ssm get-parameters-by-path \
+  --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}/x86_64/latest" \
+  --recursive \
+  --query "Parameters[?ends_with(Name, 'image_version')].Value" \
+  --output text
+
+# AL2023 (if used)
+aws ssm get-parameters-by-path \
+  --path "/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/x86_64/standard" \
+  --recursive \
+  --query "Parameters[?ends_with(Name, 'image_version')].Value" \
+  --output text
+```
+
+Update each `eks_node_ami_alias_*` variable that exists in `terraform.tfvars` to the queried value.
+
+Record to audit.log:
+
+```bash
+python3 scripts/audit_event.py \
+  --audit-log audit.log \
+  --rule-id "PHASE4-AMI" \
+  --result "PASS" \
+  --detail "eks_node_ami_alias_bottlerocket: ${OLD_AMI} → ${NEW_AMI}"
+```
+
+### 4-2. Targeted Plan for MNG
+
+```bash
+cd "${TF_DIR}" && terraform plan \
+  -target=module.eks.module.eks_managed_node_group 2>&1 | tail -40
+```
+
+Review the plan:
+- `aws_eks_node_group` `release_version` change → Expected
+- Any `-/+` (destroy-recreate) on `aws_eks_node_group` → **STOP and ask user**
+
+### 4-3. Targeted Apply for MNG
+
+```bash
+cd "${TF_DIR}" && terraform apply \
+  -target=module.eks.module.eks_managed_node_group -auto-approve 2>&1
+```
+
+This triggers the MNG rolling update. Typical duration: 10–30 minutes per node group.
+
+### 4-4. Monitor Node Rollout
+
+Poll every 60 seconds until all MNG nodes show the target version:
 
 ```bash
 kubectl get nodes \
   -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,READY:.status.conditions[-1].status'
 ```
 
-### 4-2. Gate Verification
+### 4-5. Gate Verification
 
 ```bash
 python3 scripts/phase_gate.py phase4 \
@@ -405,7 +511,7 @@ Same instructions as Phase 4-0b, with rule-id `SVC-P5` instead of `SVC-P4`.
 
 ### 5-1. Monitor Karpenter Node Replacement
 
-If Karpenter is present, AMI alias updates in Phase 1 trigger drift detection and automatic node replacement.
+If Karpenter is present, AMI alias updates in Phase 4 trigger drift detection and automatic node replacement.
 
 Monitor replacement progress:
 
