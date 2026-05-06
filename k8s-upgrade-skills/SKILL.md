@@ -17,9 +17,12 @@ It collects upgrade requirements (from `recipe.yaml` if present, or interactivel
 
 ## Step 1: Collect and Validate Recipe
 
-### 1-A: Check for existing recipe.yaml
+### 1-A: Check for existing recipe file
 
-Look for `recipe.yaml` in the project root or current working directory. Also fall back to `recipe.md` (YAML block inside markdown) if present.
+Look for recipe files in the project root or current working directory in this priority order:
+
+1. `recipe.md` (frontmatter format — preferred)
+2. `recipe.yaml`
 
 **If found**: skip to Step 1-C (validate).
 
@@ -27,7 +30,7 @@ Look for `recipe.yaml` in the project root or current working directory. Also fa
 
 ---
 
-### 1-B: Interactive Collection (no recipe.yaml)
+### 1-B: Interactive Collection (no recipe file)
 
 Ask the user for the following fields **in a single message** (do not ask one by one):
 
@@ -43,12 +46,13 @@ Ask the user for the following fields **in a single message** (do not ask one by
 
 선택 항목:
 - output_language : ko / en (기본: ko)
-- notes : 특이사항 (없으면 생략)
+- 현재 상황이나 제약사항이 있으면 자유롭게 알려주세요 (없으면 생략)
 ```
 
-Once the user provides all required fields, generate `recipe.yaml` in the current working directory:
+Once the user provides all required fields, generate `recipe.md` in the current working directory:
 
-```yaml
+```markdown
+---
 environment: <value>
 platform: <value>
 iac: <value>
@@ -56,19 +60,23 @@ cluster_name: <value>
 current_version: "<value>"
 target_version: "<value>"
 output_language: <ko|en>
-notes: "<value or empty>"
+---
+
+## 업그레이드 컨텍스트
+
+<사용자가 제공한 상황/제약사항, 없으면 이 섹션 생략>
 ```
 
-Inform the user: `recipe.yaml을 생성했습니다. 다음 세션에서 재사용됩니다.`
+Inform the user: `recipe.md를 생성했습니다. 다음 세션에서 재사용됩니다.`
 
 ---
 
 ### 1-C: Validate Recipe
 
-Run schema validation:
+Run schema validation (pass the actual file path found in Step 1-A):
 
 ```bash
-python3 scripts/validate_recipe.py recipe.yaml
+python3 scripts/validate_recipe.py recipe.md   # or recipe.yaml
 ```
 
 If validation fails (exit code 1), report the specific error and do NOT proceed.
@@ -108,15 +116,24 @@ After recipe validation passes, generate the upgrade plan document before execut
 
 Using the Plan Template from [aws/terraform-eks/reference.md](aws/terraform-eks/reference.md):
 
-1. Fill all `{PLACEHOLDER}` fields from recipe.yaml
+1. Fill all `{PLACEHOLDER}` fields from the recipe
 2. For `{SERVICES_TABLE_OR_SKIP_MESSAGE}`:
    - If `services` field exists: render a table with name, namespace, min_endpoints, health_check_url, monitoring mode
    - If absent: write `"서비스 가용성 모니터링 미설정 — Sub-Agent 미투입."`
 3. For `{PLAN_GENERATED_AT}`:
    - `output_language: ko` → KST (UTC+9) 기준 타임스탬프 (예: `2026-05-06 11:21 KST`)
    - `output_language: en` → UTC 기준 타임스탬프 (예: `2026-05-06 02:21 UTC`)
-4. Save the document as `upgrade-plan-{cluster_name}-{YYYYMMDD}.md` in the current working directory
-5. Display the full plan to the user
+4. For `{CONTEXT_ADJUSTMENTS}` — interpret `_context` from recipe.md body (or `notes` from recipe.yaml):
+   - **If no context**: write `"특이사항 없음 — 표준 절차로 진행합니다."`
+   - **If context exists**: read the body and generate a bullet list of adjustments per phase:
+     - Time constraints (maintenance window, specific hours) → `⚠️ [Phase 2] <시간 제약 내용>`
+     - Zero downtime requirement → `⚠️ [Phase 4] zero downtime 요구 — 드레인 중 서비스 엔드포인트 실시간 감시 강화`
+     - Current incidents or known issues → `⚠️ [Phase N] <관련 Phase에 주의 표시>`
+     - Pre-approved exceptions (PDB relaxation, etc.) → `✅ [Phase 0] <사전 승인된 예외 내용>`
+     - Other constraints → `ℹ️ [Phase N] <참고 내용>`
+   - Use judgment: not every sentence needs a bullet. Only extract actionable or noteworthy items.
+5. Save the document as `upgrade-plan-{cluster_name}-{YYYYMMDD}.md` in the current working directory
+6. Display the full plan to the user
 
 ### 1.5-B: Wait for Approval
 
