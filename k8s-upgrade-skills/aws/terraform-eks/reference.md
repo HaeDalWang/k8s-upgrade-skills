@@ -70,11 +70,11 @@ services 필드 없을 때:
 
 ---
 
-## 추가 특이사항
+## 컨텍스트 기반 조정사항
 
-> 이 섹션은 사람이 직접 작성합니다. 없으면 "없음"으로 기재하세요.
+> recipe.md의 컨텍스트를 분석한 결과입니다.
 
-{NOTES_FROM_RECIPE_OR_BLANK}
+{CONTEXT_ADJUSTMENTS}
 
 ---
 
@@ -137,11 +137,11 @@ services 필드 없을 때:
 
 ---
 
-## Additional Notes
+## Context-Based Adjustments
 
-> This section is filled in by a human. Write "None" if not applicable.
+> Analysis of the context from recipe.md.
 
-{NOTES_FROM_RECIPE_OR_BLANK}
+{CONTEXT_ADJUSTMENTS}
 
 ---
 
