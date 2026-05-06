@@ -30,11 +30,19 @@ NC = "\033[0m"
 # ══════════════════════════════════════════════════════════════
 
 # 시스템 네임스페이스 (WLS-002, WLS-004, WLS-005, WLS-006 제외 대상)
+# 이 네임스페이스의 워크로드는 사용자 워크로드로 분류하지 않음
 SYSTEM_NS = frozenset({
+    # Kubernetes 기본
     "kube-system", "kube-node-lease", "kube-public",
-    "karpenter", "cert-manager",
-    "amazon-cloudwatch", "amazon-guardduty",
-    "aws-secrets-manager",
+    # AWS 관리형 컴포넌트
+    "karpenter", "amazon-cloudwatch", "amazon-guardduty", "aws-secrets-manager",
+    # 일반적으로 사용되는 인프라 컴포넌트
+    "cert-manager", "external-secrets", "external-dns",
+    "ingress-nginx", "aws-load-balancer-controller",
+    "istio-system", "istio-ingress",
+    "monitoring", "logging", "observability",
+    "argocd", "flux-system",
+    "velero", "kyverno",
 })
 
 # INF-004 Data Plane 리소스 타입
@@ -42,10 +50,16 @@ DATA_PLANE_RESOURCES: frozenset = frozenset({
     "aws_eks_node_group",
     "aws_launch_template",
     "aws_autoscaling_group",
+    "aws_eks_fargate_profile",  # Fargate 프로파일 recreate는 실행 중 Pod 즉시 종료
 })
 
 # COM-003 비정상 Add-on 상태
-ADDON_BAD_STATES: frozenset = frozenset({"DEGRADED", "CREATE_FAILED"})
+ADDON_BAD_STATES: frozenset = frozenset({
+    "DEGRADED",
+    "CREATE_FAILED",
+    "UPDATE_FAILED",   # 업데이트 실패 상태도 업그레이드 전 차단
+    "DELETE_FAILED",   # 삭제 실패 상태도 비정상으로 처리
+})
 
 
 # ══════════════════════════════════════════════════════════════

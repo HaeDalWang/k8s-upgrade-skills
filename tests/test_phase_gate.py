@@ -2311,38 +2311,37 @@ class TestGatePhase6:
         assert rc == 1
 
     def test_tfplan_cleanup_on_success(self, tmp_path):
-        """.tfplan 파일이 성공 시 삭제됨."""
+        """.tfplan 파일이 성공 시 삭제됨 (tempfile 방식)."""
         audit = str(tmp_path / "audit.log")
         tf_dir = str(tmp_path / "tf")
         (tmp_path / "tf").mkdir()
-        tfplan = tmp_path / "tf" / ".tfplan"
-        tfplan.write_text("dummy")
 
         se = self._mock_subprocess_run(plan_json={"resource_changes": []})
         with unittest.mock.patch("subprocess.run", side_effect=se):
             phase_gate.gate_phase6(tf_dir, audit)
-        assert not tfplan.exists()
+        # tempfile 방식: tf_dir에 .tfplan 파일이 남아있지 않아야 함
+        import glob
+        remaining = glob.glob(str(tmp_path / "tf" / "*.tfplan"))
+        assert not remaining, f"tfplan files should be cleaned up: {remaining}"
 
     def test_tfplan_cleanup_on_failure(self, tmp_path):
-        """.tfplan 파일이 실패 시에도 삭제됨."""
+        """.tfplan 파일이 실패 시에도 삭제됨 (tempfile 방식)."""
         audit = str(tmp_path / "audit.log")
         tf_dir = str(tmp_path / "tf")
         (tmp_path / "tf").mkdir()
-        tfplan = tmp_path / "tf" / ".tfplan"
-        tfplan.write_text("dummy")
 
         se = self._mock_subprocess_run(plan_rc=1)
         with unittest.mock.patch("subprocess.run", side_effect=se):
             phase_gate.gate_phase6(tf_dir, audit)
-        assert not tfplan.exists()
+        import glob
+        remaining = glob.glob(str(tmp_path / "tf" / "*.tfplan"))
+        assert not remaining, f"tfplan files should be cleaned up: {remaining}"
 
     def test_tfplan_cleanup_on_exception(self, tmp_path):
         """.tfplan 파일이 예외 발생 시에도 삭제됨 (try/finally)."""
         audit = str(tmp_path / "audit.log")
         tf_dir = str(tmp_path / "tf")
         (tmp_path / "tf").mkdir()
-        tfplan = tmp_path / "tf" / ".tfplan"
-        tfplan.write_text("dummy")
 
         def side_effect(args, **kwargs):
             cmd = " ".join(str(a) for a in args)
@@ -2353,7 +2352,9 @@ class TestGatePhase6:
         with unittest.mock.patch("subprocess.run", side_effect=side_effect):
             rc = phase_gate.gate_phase6(tf_dir, audit)
         assert rc == 1
-        assert not tfplan.exists()
+        import glob
+        remaining = glob.glob(str(tmp_path / "tf" / "*.tfplan"))
+        assert not remaining, f"tfplan files should be cleaned up: {remaining}"
 
     def test_mixed_changes_with_one_recreate_returns_1(self, tmp_path):
         """비파괴적 + recreate 혼합 → exit 1."""

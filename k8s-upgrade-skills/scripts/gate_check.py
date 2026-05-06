@@ -68,6 +68,28 @@ REPLACE_PREFIX = re.compile(r"^\s*-/\+\s+resource\s+\"(\w+)\"\s+\"(\w+)\"", re.M
 # ── INF-001 Destroy/Recreate 패턴 ──
 DESTROY_PATTERN = re.compile(r"Plan:.*\d+\s+to\s+destroy")
 
+# ── CAP-001 노드 사용률 임계값 ──
+CAP_CRIT_PCT = 90   # 이 이상이면 drain 시 Pod Pending 확정
+CAP_WARN_PCT = 80   # 이 이상이면 drain 시 여유 부족 경고
+
+# ── WLS-005 장시간 Job 판정 기준 ──
+JOB_RISKY_AGE_MIN = 30  # 분 — 이 이상 실행 중인 Job은 drain 위험
+
+# ── COM-002a kubelet skew 정책 변경 버전 ──
+KUBELET_SKEW_RELAXED_MINOR = 28  # K8s 1.28부터 n-3으로 완화
+KUBELET_SKEW_OLD = 2
+KUBELET_SKEW_NEW = 3
+
+# ── INF-002 AMI 가용성 fallback 경로 (MNG 조회 실패 시) ──
+_INF002_FALLBACK_TYPES = [
+    "AL2023_x86_64_STANDARD", "AL2023_ARM_64_STANDARD",
+    "BOTTLEROCKET_x86_64", "BOTTLEROCKET_ARM_64",
+]
+
+# ── CAP-003 서브넷 가용 IP 임계값 ──
+SUBNET_CRIT_IP = 10   # 이 미만이면 surge 노드 추가 불가
+SUBNET_WARN_IP = 50   # 이 미만이면 여유 부족 경고
+
 
 # ══════════════════════════════════════════════════════════════
 # COM-002: 버전 호환성 검증 (CRITICAL)
@@ -169,7 +191,7 @@ def check_com002a(target_version: str) -> None:
                f"버전 형식 오류 ({target_version}) → 마이너 버전이 정수가 아닙니다")
         return
     # K8s 1.28부터 kubelet skew 정책이 n-3으로 완화됨
-    max_skew = 3 if targ_minor >= 28 else 2
+    max_skew = KUBELET_SKEW_NEW if targ_minor >= KUBELET_SKEW_RELAXED_MINOR else KUBELET_SKEW_OLD
     nodes = kubectl_json("nodes", all_ns=False)
     if nodes is None:
         record("COM-002a", "CRITICAL", "FAIL", "kubectl 연결 실패 — kubelet skew 검증 불가")
@@ -449,7 +471,7 @@ def check_wls005() -> None:
         else:
             age_min = 0
 
-        if age_min > 30 or restart_policy == "Never":
+        if age_min > JOB_RISKY_AGE_MIN or restart_policy == "Never":
             print(f"  Job: {ns}/{name} age={int(age_min)}min "
                   f"restart={restart_policy}", file=sys.stderr)
             risky_jobs += 1
@@ -530,10 +552,16 @@ def check_wls006() -> None:
 
 # amiType → SSM 경로 템플릿 매핑 ({v} = target_version)
 _AMI_TYPE_SSM_PATHS: dict[str, str] = {
+    # AL2023
     "AL2023_x86_64_STANDARD": "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/x86_64/standard",
     "AL2023_ARM_64_STANDARD": "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/arm64/standard",
+    "AL2023_x86_64_NVIDIA":   "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/x86_64/nvidia",
+    "AL2023_x86_64_NEURON":   "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/x86_64/neuron",
+    # AL2
     "AL2_x86_64":             "/aws/service/eks/optimized-ami/{v}/amazon-linux-2/recommended",
     "AL2_ARM_64":             "/aws/service/eks/optimized-ami/{v}/amazon-linux-2/arm/recommended",
+    "AL2_x86_64_GPU":         "/aws/service/eks/optimized-ami/{v}/amazon-linux-2/recommended/gpu",
+    # Bottlerocket
     "BOTTLEROCKET_x86_64":    "/aws/service/bottlerocket/aws-k8s-{v}/x86_64",
     "BOTTLEROCKET_ARM_64":    "/aws/service/bottlerocket/aws-k8s-{v}/arm64",
     # CUSTOM, WINDOWS_* → SSM 경로 없음 → SKIP
@@ -663,12 +691,12 @@ def check_cap001() -> None:
             max_pct = max(max_pct, used["mem"] / alloc["mem"] * 100)
 
     util = int(max_pct)
-    if util > 90:
+    if util > CAP_CRIT_PCT:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> 90% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요")
-    elif util > 80:
+               f"최대 노드 사용률 {util}% (> {CAP_CRIT_PCT}% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요")
+    elif util > CAP_WARN_PCT:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> 80% — drain 시 여유 부족) → 노드 스케일업 권장")
+               f"최대 노드 사용률 {util}% (> {CAP_WARN_PCT}% — drain 시 여유 부족) → 노드 스케일업 권장")
     else:
         record("CAP-001", "HIGH", "PASS",
                f"최대 노드 사용률 {util}% (여유 충분)")
@@ -791,23 +819,23 @@ def check_cap003(cluster_name: str) -> None:
         record("CAP-003", "HIGH", "FAIL", "서브넷 JSON 파싱 실패")
         return
 
-    critical_low: list[str] = []   # < 10
-    warning_low: list[str] = []    # 10~49
+    critical_low: list[str] = []   # SUBNET_CRIT_IP 미만
+    warning_low: list[str] = []    # SUBNET_CRIT_IP ~ SUBNET_WARN_IP 미만
 
     for s in subnets_data:
         sid = s.get("SubnetId", "?")
         avail = s.get("AvailableIpAddressCount", 0)
-        if avail < 10:
+        if avail < SUBNET_CRIT_IP:
             critical_low.append(f"{sid}({avail})")
-        elif avail < 50:
+        elif avail < SUBNET_WARN_IP:
             warning_low.append(f"{sid}({avail})")
 
     if critical_low:
         record("CAP-003", "HIGH", "FAIL",
-               f"가용 IP < 10: {', '.join(critical_low)} → 서브넷 CIDR 확장 또는 prefix delegation 활성화 필요")
+               f"가용 IP < {SUBNET_CRIT_IP}: {', '.join(critical_low)} → 서브넷 CIDR 확장 또는 prefix delegation 활성화 필요")
     elif warning_low:
         record("CAP-003", "HIGH", "FAIL",
-               f"가용 IP 10~49 (고갈 위험): {', '.join(warning_low)} → surge 노드 생성 시 IP 부족 가능. 서브넷 확장 권장")
+               f"가용 IP {SUBNET_CRIT_IP}~{SUBNET_WARN_IP - 1} (고갈 위험): {', '.join(warning_low)} → surge 노드 생성 시 IP 부족 가능. 서브넷 확장 권장")
     else:
         record("CAP-003", "HIGH", "PASS",
                "모든 서브넷 가용 IP ≥ 50")
@@ -892,17 +920,19 @@ def check_inf003() -> None:
         record("INF-003", "HIGH", "SKIP", "Karpenter CRD 미존재 — 건너뜀")
         return
 
-    # 2. Karpenter 버전 추출
+    # 2. Karpenter deployment 동적 탐색 (네임스페이스 하드코딩 방지)
     r = run_cmd([
-        "kubectl", "get", "deployment", "-n", "karpenter", "karpenter",
+        "kubectl", "get", "deployment", "-A",
+        "-l", "app.kubernetes.io/name=karpenter",
         "-o", "json",
     ])
     version = "unknown"
     if r.returncode == 0:
         try:
-            dep = json.loads(r.stdout)
-            image = dep["spec"]["template"]["spec"]["containers"][0]["image"]
-            version = image.rsplit(":", 1)[-1] if ":" in image else "unknown"
+            deps = json.loads(r.stdout).get("items", [])
+            if deps:
+                image = deps[0]["spec"]["template"]["spec"]["containers"][0]["image"]
+                version = image.rsplit(":", 1)[-1] if ":" in image else "unknown"
         except (json.JSONDecodeError, KeyError, IndexError):
             pass
 

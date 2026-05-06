@@ -989,18 +989,20 @@ def _build_inf003_run_cmd_side_effect(crd_exists, image_tag, nodepools):
             else:
                 return subprocess.CompletedProcess(args, 1, stdout="", stderr="not found")
 
-        # 2) kubectl get deployment -n karpenter karpenter -o json
-        if "deployment" in args and "-n" in args and "karpenter" in args:
+        # 2) kubectl get deployment -A -l app.kubernetes.io/name=karpenter -o json
+        if "deployment" in args and "-A" in args and "app.kubernetes.io/name=karpenter" in " ".join(args):
             dep = {
-                "spec": {
-                    "template": {
-                        "spec": {
-                            "containers": [{
-                                "image": f"public.ecr.aws/karpenter/controller:{image_tag}",
-                            }],
+                "items": [{
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "containers": [{
+                                    "image": f"public.ecr.aws/karpenter/controller:{image_tag}",
+                                }],
+                            },
                         },
                     },
-                },
+                }]
             }
             return subprocess.CompletedProcess(args, 0, stdout=_json.dumps(dep), stderr="")
 
