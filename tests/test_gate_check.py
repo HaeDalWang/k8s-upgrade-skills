@@ -1595,3 +1595,174 @@ class TestKubectlJsonNoneHandling:
         with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
             gate_check.check_com002a("1.34")
         assert gate_check.critical_fail >= 1
+
+
+# ══════════════════════════════════════════════════════════════
+# INF-002: amiType 기반 동적 AMI 경로 검증
+# ══════════════════════════════════════════════════════════════
+
+import json as _json_inf002
+
+
+def _make_inf002_run_cmd(ami_types: list[str], ssm_count: int = 3):
+    """check_inf002 mock: list-nodegroups + describe-nodegroup + ssm get-parameters-by-path."""
+    nodegroups = [f"ng-{i}" for i in range(len(ami_types))]
+
+    def side_effect(args, timeout=30):
+        if "list-nodegroups" in args:
+            return subprocess.CompletedProcess(
+                args, 0,
+                stdout=_json_inf002.dumps({"nodegroups": nodegroups}),
+                stderr="",
+            )
+        if "describe-nodegroup" in args and "--query" in args:
+            idx = args.index("--nodegroup-name") + 1
+            ng_name = args[idx]
+            ng_idx = int(ng_name.split("-")[1])
+            ami_type = ami_types[ng_idx] if ng_idx < len(ami_types) else "AL2023_x86_64_STANDARD"
+            return subprocess.CompletedProcess(
+                args, 0, stdout=ami_type, stderr="",
+            )
+        if "get-parameters-by-path" in args:
+            return subprocess.CompletedProcess(
+                args, 0, stdout=str(ssm_count), stderr="",
+            )
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="unknown")
+
+    return side_effect
+
+
+class TestInf002AmiTypeBasedPaths:
+    """INF-002: amiType 기반 동적 AMI 경로 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    def test_al2023_x86_64_queries_x86_path(self):
+        """AL2023_x86_64_STANDARD → x86_64 경로 조회."""
+        queried_paths = []
+
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(args, 0, stdout='{"nodegroups": ["ng-0"]}', stderr="")
+            if "describe-nodegroup" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="AL2023_x86_64_STANDARD", stderr="")
+            if "get-parameters-by-path" in args:
+                path_idx = args.index("--path") + 1
+                queried_paths.append(args[path_idx])
+                return subprocess.CompletedProcess(args, 0, stdout="3", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.34")
+
+        assert any("x86_64" in p for p in queried_paths), f"x86_64 path not queried: {queried_paths}"
+        assert not any("arm64" in p for p in queried_paths), f"arm64 path should not be queried: {queried_paths}"
+        assert gate_check.total_pass == 1
+        assert gate_check.critical_fail == 0
+
+    def test_bottlerocket_arm64_queries_arm64_path(self):
+        """BOTTLEROCKET_ARM_64 → arm64 경로 조회."""
+        queried_paths = []
+
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(args, 0, stdout='{"nodegroups": ["ng-0"]}', stderr="")
+            if "describe-nodegroup" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="BOTTLEROCKET_ARM_64", stderr="")
+            if "get-parameters-by-path" in args:
+                path_idx = args.index("--path") + 1
+                queried_paths.append(args[path_idx])
+                return subprocess.CompletedProcess(args, 0, stdout="5", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.34")
+
+        assert any("arm64" in p for p in queried_paths), f"arm64 path not queried: {queried_paths}"
+        assert not any("x86_64" in p for p in queried_paths), f"x86_64 path should not be queried: {queried_paths}"
+        assert gate_check.total_pass == 1
+        assert gate_check.critical_fail == 0
+
+    def test_custom_ami_type_skips_ssm_query(self):
+        """CUSTOM amiType → SSM 조회 없이 SKIP."""
+        ssm_called = []
+
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(args, 0, stdout='{"nodegroups": ["ng-0"]}', stderr="")
+            if "describe-nodegroup" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="CUSTOM", stderr="")
+            if "get-parameters-by-path" in args:
+                ssm_called.append(True)
+                return subprocess.CompletedProcess(args, 0, stdout="3", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.34")
+
+        assert not ssm_called, "SSM should not be queried for CUSTOM amiType"
+        assert gate_check.total_pass >= 1  # SKIP counts as pass
+
+    def test_ami_missing_returns_critical_fail(self):
+        """AMI 미출시 시 CRITICAL FAIL."""
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(args, 0, stdout='{"nodegroups": ["ng-0"]}', stderr="")
+            if "describe-nodegroup" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="AL2023_x86_64_STANDARD", stderr="")
+            if "get-parameters-by-path" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="0", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.99")
+
+        assert gate_check.critical_fail == 1
+        assert gate_check.total_pass == 0
+
+    def test_list_nodegroups_failure_falls_back_to_both_archs(self):
+        """list-nodegroups 실패 시 x86_64+arm64 fallback 조회."""
+        queried_paths = []
+
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="error")
+            if "get-parameters-by-path" in args:
+                path_idx = args.index("--path") + 1
+                queried_paths.append(args[path_idx])
+                return subprocess.CompletedProcess(args, 0, stdout="3", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.34")
+
+        # fallback: 여러 아키텍처 경로 조회
+        assert len(queried_paths) > 1, f"Fallback should query multiple paths: {queried_paths}"
+
+    def test_mixed_ami_types_queries_each_arch(self):
+        """x86_64 + arm64 혼합 클러스터 → 각 아키텍처 경로 모두 조회."""
+        queried_paths = []
+        call_count = [0]
+
+        def mock_run(args, timeout=30):
+            if "list-nodegroups" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout='{"nodegroups": ["ng-0", "ng-1"]}', stderr=""
+                )
+            if "describe-nodegroup" in args:
+                call_count[0] += 1
+                ami = "AL2023_x86_64_STANDARD" if call_count[0] == 1 else "AL2023_ARM_64_STANDARD"
+                return subprocess.CompletedProcess(args, 0, stdout=ami, stderr="")
+            if "get-parameters-by-path" in args:
+                path_idx = args.index("--path") + 1
+                queried_paths.append(args[path_idx])
+                return subprocess.CompletedProcess(args, 0, stdout="3", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with unittest.mock.patch.object(gate_check, "run_cmd", side_effect=mock_run):
+            gate_check.check_inf002("test-cluster", "1.34")
+
+        has_x86 = any("x86_64" in p for p in queried_paths)
+        has_arm = any("arm64" in p for p in queried_paths)
+        assert has_x86 and has_arm, f"Both archs should be queried: {queried_paths}"

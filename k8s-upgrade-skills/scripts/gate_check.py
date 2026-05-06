@@ -527,58 +527,95 @@ def check_wls006() -> None:
 # ══════════════════════════════════════════════════════════════
 # INF-002: 대상 버전 AMI 가용성 검증 (CRITICAL)
 # ══════════════════════════════════════════════════════════════
-def check_inf002(target_version: str) -> None:
-    ami_found = 0
-    ami_missing = 0
 
-    # AL2023
-    r = run_cmd([
-        "aws", "ssm", "get-parameters-by-path",
-        "--path",
-        f"/aws/service/eks/optimized-ami/{target_version}"
-        "/amazon-linux-2023/x86_64/standard",
-        "--recursive",
-        "--query", "Parameters | length(@)",
-        "--output", "text",
-    ])
-    _al2023_first = r.stdout.strip().split()[0] if r.returncode == 0 and r.stdout.strip() else "0"
-    al2023 = int(_al2023_first) if _al2023_first.isdigit() else 0
+# amiType → SSM 경로 템플릿 매핑 ({v} = target_version)
+_AMI_TYPE_SSM_PATHS: dict[str, str] = {
+    "AL2023_x86_64_STANDARD": "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/x86_64/standard",
+    "AL2023_ARM_64_STANDARD": "/aws/service/eks/optimized-ami/{v}/amazon-linux-2023/arm64/standard",
+    "AL2_x86_64":             "/aws/service/eks/optimized-ami/{v}/amazon-linux-2/recommended",
+    "AL2_ARM_64":             "/aws/service/eks/optimized-ami/{v}/amazon-linux-2/arm/recommended",
+    "BOTTLEROCKET_x86_64":    "/aws/service/bottlerocket/aws-k8s-{v}/x86_64",
+    "BOTTLEROCKET_ARM_64":    "/aws/service/bottlerocket/aws-k8s-{v}/arm64",
+    # CUSTOM, WINDOWS_* → SSM 경로 없음 → SKIP
+}
 
-    if al2023 > 0:
-        ami_found += 1
-    else:
-        ami_missing += 1
-        print(f"  MISSING: AL2023 x86_64 AMI for {target_version}",
-              file=sys.stderr)
 
-    # Bottlerocket
-    r = run_cmd([
-        "aws", "ssm", "get-parameters-by-path",
-        "--path",
-        f"/aws/service/bottlerocket/aws-k8s-{target_version}/x86_64",
-        "--recursive",
-        "--query", "Parameters | length(@)",
-        "--output", "text",
-    ])
-    _br_first = r.stdout.strip().split()[0] if r.returncode == 0 and r.stdout.strip() else "0"
-    br = int(_br_first) if _br_first.isdigit() else 0
+def _get_cluster_ami_types(cluster_name: str) -> list[str]:
+    """클러스터 MNG의 amiType 목록 반환. 조회 실패 시 빈 리스트."""
+    r = run_cmd(["aws", "eks", "list-nodegroups",
+                 "--cluster-name", cluster_name, "--output", "json"])
+    if r.returncode != 0:
+        return []
+    try:
+        nodegroups = json.loads(r.stdout).get("nodegroups", [])
+    except json.JSONDecodeError:
+        return []
 
-    if br > 0:
-        ami_found += 1
-    else:
-        ami_missing += 1
-        print(f"  MISSING: Bottlerocket x86_64 AMI for {target_version}",
-              file=sys.stderr)
+    ami_types: list[str] = []
+    for ng in nodegroups:
+        r2 = run_cmd(["aws", "eks", "describe-nodegroup",
+                      "--cluster-name", cluster_name,
+                      "--nodegroup-name", ng,
+                      "--query", "nodegroup.amiType",
+                      "--output", "text"])
+        if r2.returncode == 0 and r2.stdout.strip():
+            ami_types.append(r2.stdout.strip())
+    return ami_types
 
-    if ami_missing > 0 and ami_found == 0:
+
+def check_inf002(cluster_name: str, target_version: str) -> None:
+    """INF-002: 클러스터 amiType 기반으로 대상 버전 AMI 가용성 검증."""
+    ami_types = _get_cluster_ami_types(cluster_name)
+
+    if not ami_types:
+        # MNG 조회 실패 시 x86_64/arm64 양쪽 확인 (fallback)
+        ami_types = ["AL2023_x86_64_STANDARD", "AL2023_ARM_64_STANDARD",
+                     "BOTTLEROCKET_x86_64", "BOTTLEROCKET_ARM_64"]
+
+    # 중복 제거 + SSM 경로 없는 타입(CUSTOM, WINDOWS_*) 제외
+    unique_types = sorted(set(ami_types))
+    checkable = [t for t in unique_types if t in _AMI_TYPE_SSM_PATHS]
+    skipped = [t for t in unique_types if t not in _AMI_TYPE_SSM_PATHS]
+
+    if skipped:
+        for t in skipped:
+            record("INF-002", "CRITICAL", "SKIP",
+                   f"amiType={t} — SSM AMI 경로 없음 (CUSTOM/WINDOWS), 수동 확인 필요")
+
+    if not checkable:
+        record("INF-002", "CRITICAL", "SKIP", "검증 가능한 amiType 없음 — 수동 AMI 확인 필요")
+        return
+
+    found: list[str] = []
+    missing: list[str] = []
+
+    for ami_type in checkable:
+        path = _AMI_TYPE_SSM_PATHS[ami_type].replace("{v}", target_version)
+        r = run_cmd([
+            "aws", "ssm", "get-parameters-by-path",
+            "--path", path,
+            "--recursive",
+            "--query", "Parameters | length(@)",
+            "--output", "text",
+        ])
+        first = r.stdout.strip().split()[0] if r.returncode == 0 and r.stdout.strip() else "0"
+        count = int(first) if first.isdigit() else 0
+
+        if count > 0:
+            found.append(f"{ami_type}({count})")
+        else:
+            missing.append(ami_type)
+            print(f"  MISSING: {ami_type} AMI for {target_version}", file=sys.stderr)
+
+    if missing and not found:
         record("INF-002", "CRITICAL", "FAIL",
-               f"AMI 미출시 (AL2023={al2023}, BR={br}) → AWS에서 AMI 릴리스 대기 (보통 EKS 버전 출시 후 1-2주)")
-    elif ami_missing > 0:
+               f"AMI 미출시 — {', '.join(missing)} → AWS AMI 릴리스 대기 (보통 EKS 버전 출시 후 1-2주)")
+    elif missing:
         record("INF-002", "CRITICAL", "PASS",
-               f"일부 AMI 존재 (AL2023={al2023}, BR={br}) — 사용 중인 타입 확인 필요")
+               f"일부 AMI 존재 — found: {', '.join(found)} / missing: {', '.join(missing)}")
     else:
         record("INF-002", "CRITICAL", "PASS",
-               f"모든 AMI 존재 (AL2023={al2023}, BR={br})")
+               f"모든 AMI 존재 — {', '.join(found)}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1014,7 +1051,7 @@ def main() -> None:
             record("INF-001", "HIGH", "SKIP", "--tf-dir 미제공")
             track("INF-001")
 
-        check_inf002(args.target_version)
+        check_inf002(args.cluster_name, args.target_version)
         track("INF-002")
         check_inf003()
         track("INF-003")
