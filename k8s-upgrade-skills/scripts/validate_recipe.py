@@ -386,25 +386,35 @@ def main() -> None:
 
 
 def _check_ami_available(target_version: str):
-    """AMI 가용성 사전 확인. aws cli 없으면 None 반환."""
+    """AMI 가용성 사전 확인. aws cli 없으면 None 반환.
+
+    recipe 검증 시점에는 cluster_name이 없으므로 amiType을 알 수 없다.
+    x86_64와 arm64 두 경로를 모두 확인하여 어느 하나라도 존재하면 출시된 것으로 판단.
+    (사전 경고용 함수이므로 false negative보다 false positive가 낫다)
+    """
     import subprocess
-    try:
-        r = subprocess.run(
-            ["aws", "ssm", "get-parameters-by-path",
-             "--path",
-             f"/aws/service/eks/optimized-ami/{target_version}"
-             "/amazon-linux-2023/x86_64/standard",
-             "--recursive",
-             "--query", "Parameters | length(@)",
-             "--output", "text"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode != 0:
+    paths = [
+        f"/aws/service/eks/optimized-ami/{target_version}/amazon-linux-2023/x86_64/standard",
+        f"/aws/service/eks/optimized-ami/{target_version}/amazon-linux-2023/arm64/standard",
+    ]
+    for path in paths:
+        try:
+            r = subprocess.run(
+                ["aws", "ssm", "get-parameters-by-path",
+                 "--path", path,
+                 "--recursive",
+                 "--query", "Parameters | length(@)",
+                 "--output", "text"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode != 0:
+                continue
+            count = int(r.stdout.strip()) if r.stdout.strip().isdigit() else 0
+            if count > 0:
+                return True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
-        count = int(r.stdout.strip()) if r.stdout.strip().isdigit() else 0
-        return count > 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+    return False
 
 
 if __name__ == "__main__":
