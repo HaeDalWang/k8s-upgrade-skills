@@ -12,3 +12,12 @@ crash.*.log
 .history.md
 history.md
 .hypothesis/
+
+# Upgrade artifacts (generated per run)
+audit.log
+upgrade-plan-*.md
+upgrade-report-*.md
+
+# Python cache
+__pycache__/
+*.pyc
