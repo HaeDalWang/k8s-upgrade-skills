@@ -153,25 +153,29 @@ services:
 {
   "permissions": {
     "allow": [
-      "Bash(python3 k8s-upgrade-skills/scripts/validate_recipe.py:*)",
-      "Bash(python3 k8s-upgrade-skills/scripts/gate_check.py:*)",
-      "Bash(python3 k8s-upgrade-skills/scripts/phase_gate.py:*)",
-      "Bash(python3 k8s-upgrade-skills/scripts/audit_event.py:*)",
-      "Bash(kubectl get:*)",
-      "Bash(kubectl describe:*)",
-      "Bash(kubectl patch:*)",
-      "Bash(kubectl scale:*)",
-      "Bash(kubectl delete:*)",
-      "Bash(aws eks:*)",
-      "Bash(aws ssm:*)",
-      "Bash(terraform plan:*)",
-      "Bash(terraform apply:*)"
+      "Bash(python3 k8s-upgrade-skills/scripts/*)",
+      "Bash(python3 scripts/*)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl patch *)",
+      "Bash(kubectl scale *)",
+      "Bash(kubectl delete pod*)",
+      "Bash(aws eks *)",
+      "Bash(aws ssm *)",
+      "Bash(terraform plan*)",
+      "Bash(terraform apply*)",
+      "Bash(terraform show*)",
+      "Bash(find . *)",
+      "Bash(grep *)",
+      "Bash(jq *)",
+      "Bash(curl -sf*)"
     ]
   }
 }
 ```
 
 > `kubectl patch/scale/delete`는 Phase 0 CRITICAL 해소 조치(PDB 수정, padding Pod 삭제 등)에 사용됩니다. 읽기 전용 사전 검증만 원한다면 해당 항목을 제외하세요.
+> `jq`, `curl`은 Phase 2 타임아웃 감지(MNG 상태 확인) 및 Service-Aware Sub-Agent(헬스체크)에 사용됩니다.
 
 ## 업그레이드 워크플로우
 
