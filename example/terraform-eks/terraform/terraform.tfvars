@@ -2,9 +2,9 @@
 vpc_cidr    = "10.222.0.0/16"
 
 # EKS
-eks_cluster_version = "1.33"
+eks_cluster_version = "1.34"
 
-eks_node_ami_alias_bottlerocket = "bottlerocket@1.55.0"
+eks_node_ami_alias_bottlerocket = "bottlerocket@1.60.0"
 
 # Chart 버전 최신화: 2026년 5월 3일
 karpenter_chart_version                    = "1.8.3"
