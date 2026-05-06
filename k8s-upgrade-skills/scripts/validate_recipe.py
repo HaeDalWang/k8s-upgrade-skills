@@ -182,6 +182,23 @@ def validate_services(services: list[dict]) -> list[str]:
     return errors
 
 
+def extract_frontmatter(text: str) -> tuple[str, str]:
+    """YAML frontmatter(--- 구분자) 추출.
+
+    반환: (yaml_str, body_str)
+    body_str은 LLM이 읽는 자유 형식 컨텍스트.
+    frontmatter가 없으면 ("", text) 반환.
+    """
+    if not text.startswith("---"):
+        return "", text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return "", text
+    yaml_str = text[3:end].strip()
+    body = text[end + 4:].strip()
+    return yaml_str, body
+
+
 def extract_yaml_from_md(text: str) -> str:
     """마크다운 코드블록(```yaml ... ```) 내 YAML 추출."""
     pattern = re.compile(r'```ya?ml\s*\n(.*?)```', re.DOTALL)
@@ -193,15 +210,34 @@ def extract_yaml_from_md(text: str) -> str:
 
 
 def load_recipe(path: str) -> dict:
-    """recipe.yaml 또는 recipe.md를 로드하여 dict 반환."""
+    """recipe.yaml 또는 recipe.md를 로드하여 dict 반환.
+
+    recipe.md 처리 우선순위:
+    1. YAML frontmatter (--- 구분자) — 권장 포맷
+    2. YAML 코드블록 (```yaml ... ```) — deprecated
+    """
     content = Path(path).read_text(encoding="utf-8")
+
     if path.endswith(".md"):
-        print(
-            "⚠️  [DEPRECATED] recipe.md 형식은 v2에서 제거 예정입니다. "
-            "recipe.yaml로 마이그레이션하세요.",
-            file=sys.stderr,
-        )
-        content = extract_yaml_from_md(content)
+        yaml_str, body = extract_frontmatter(content)
+        if yaml_str:
+            # frontmatter 포맷 (권장)
+            recipe = parse_simple_yaml(yaml_str)
+            services = parse_services_block(yaml_str)
+            if services:
+                recipe["_services"] = services
+            if body:
+                recipe["_context"] = body
+            return recipe
+        else:
+            # 기존 코드블록 포맷 (deprecated)
+            print(
+                "⚠️  [DEPRECATED] recipe.md 코드블록 형식은 향후 제거 예정입니다. "
+                "frontmatter 형식(--- 구분자)으로 마이그레이션하세요.",
+                file=sys.stderr,
+            )
+            content = extract_yaml_from_md(content)
+
     recipe = parse_simple_yaml(content)
     services = parse_services_block(content)
     if services:
@@ -312,7 +348,7 @@ def main() -> None:
     # 파싱 결과 출력
     print(f"📋 Recipe: {path}")
     for k, v in recipe.items():
-        if k == "_services":
+        if k.startswith("_"):
             continue
         print(f"   {k}: {v}")
     services = recipe.get("_services", [])
@@ -323,6 +359,10 @@ def main() -> None:
             mode = "EndpointSlice + HTTP" if hc else "EndpointSlice only (BestEffort)"
             print(f"     - {svc.get('namespace')}/{svc.get('name')} "
                   f"min_endpoints={svc.get('min_endpoints')} [{mode}]")
+    context = recipe.get("_context", "")
+    if context:
+        preview = context[:80].replace("\n", " ")
+        print(f"   context: {preview}{'...' if len(context) > 80 else ''}")
     print()
 
     errors = validate(recipe)

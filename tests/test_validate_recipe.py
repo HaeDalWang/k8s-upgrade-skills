@@ -256,3 +256,161 @@ services:
             capture_output=True, text=True
         )
         assert r.returncode == 1
+
+
+# ══════════════════════════════════════════════════════════════
+# recipe.md frontmatter 파싱 테스트
+# ══════════════════════════════════════════════════════════════
+
+VALID_FRONTMATTER = """\
+---
+environment: aws
+platform: eks
+iac: terraform
+cluster_name: my-cluster
+current_version: "1.33"
+target_version: "1.34"
+output_language: ko
+---
+"""
+
+VALID_FRONTMATTER_WITH_CONTEXT = VALID_FRONTMATTER + """\
+## 업그레이드 컨텍스트
+
+- zero downtime 필수
+- 유지보수 윈도우: 02:00~04:00 KST
+"""
+
+
+def _write_recipe_md(tmp_path, content: str) -> str:
+    p = tmp_path / "recipe.md"
+    p.write_text(content, encoding="utf-8")
+    return str(p)
+
+
+class TestExtractFrontmatter:
+
+    def test_valid_frontmatter_returns_yaml_and_body(self):
+        text = "---\nfoo: bar\n---\n\nbody content"
+        yaml_str, body = validate_recipe.extract_frontmatter(text)
+        assert yaml_str == "foo: bar"
+        assert "body content" in body
+
+    def test_no_frontmatter_returns_empty_yaml(self):
+        text = "just plain text"
+        yaml_str, body = validate_recipe.extract_frontmatter(text)
+        assert yaml_str == ""
+        assert body == "just plain text"
+
+    def test_frontmatter_only_no_body(self):
+        text = "---\nfoo: bar\n---\n"
+        yaml_str, body = validate_recipe.extract_frontmatter(text)
+        assert yaml_str == "foo: bar"
+        assert body == ""
+
+    def test_unclosed_frontmatter_returns_empty(self):
+        text = "---\nfoo: bar\n"
+        yaml_str, body = validate_recipe.extract_frontmatter(text)
+        assert yaml_str == ""
+
+    def test_non_frontmatter_md_returns_empty(self):
+        text = "# Title\n\nsome content"
+        yaml_str, body = validate_recipe.extract_frontmatter(text)
+        assert yaml_str == ""
+
+
+class TestLoadRecipeMd:
+
+    def test_frontmatter_recipe_md_loads_correctly(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER)
+        recipe = validate_recipe.load_recipe(path)
+        assert recipe["environment"] == "aws"
+        assert recipe["cluster_name"] == "my-cluster"
+        assert recipe["current_version"] == "1.33"
+
+    def test_frontmatter_with_context_stores_context(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER_WITH_CONTEXT)
+        recipe = validate_recipe.load_recipe(path)
+        assert "_context" in recipe
+        assert "zero downtime" in recipe["_context"]
+
+    def test_frontmatter_without_body_has_no_context(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER)
+        recipe = validate_recipe.load_recipe(path)
+        assert recipe.get("_context", "") == ""
+
+    def test_frontmatter_recipe_md_passes_validation(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER)
+        recipe = validate_recipe.load_recipe(path)
+        errors = validate_recipe.validate(recipe)
+        assert errors == []
+
+    def test_frontmatter_with_services_in_body_area(self, tmp_path):
+        # services는 frontmatter 안에 선언해야 함 (body는 자유 형식 컨텍스트 전용)
+        content = """\
+---
+environment: aws
+platform: eks
+iac: terraform
+cluster_name: my-cluster
+current_version: "1.33"
+target_version: "1.34"
+output_language: ko
+services:
+  - name: my-api
+    namespace: production
+    min_endpoints: 2
+    health_check_url: https://api.example.com/health
+---
+"""
+        path = _write_recipe_md(tmp_path, content)
+        recipe = validate_recipe.load_recipe(path)
+        assert "_services" in recipe
+        assert len(recipe["_services"]) == 1
+
+    def test_frontmatter_no_notes_field_needed(self, tmp_path):
+        # notes 필드 없어도 통과해야 함
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER)
+        recipe = validate_recipe.load_recipe(path)
+        errors = validate_recipe.validate(recipe)
+        assert errors == []
+
+
+class TestCLIRecipeMd:
+
+    def test_cli_frontmatter_recipe_md_exits_0(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER)
+        r = subprocess.run(
+            [sys.executable, "k8s-upgrade-skills/scripts/validate_recipe.py", path],
+            capture_output=True, text=True
+        )
+        assert r.returncode == 0
+        assert "✅" in r.stdout
+
+    def test_cli_frontmatter_with_context_shows_context(self, tmp_path):
+        path = _write_recipe_md(tmp_path, VALID_FRONTMATTER_WITH_CONTEXT)
+        r = subprocess.run(
+            [sys.executable, "k8s-upgrade-skills/scripts/validate_recipe.py", path],
+            capture_output=True, text=True
+        )
+        assert r.returncode == 0
+        assert "context" in r.stdout
+
+    def test_cli_invalid_version_gap_in_frontmatter_exits_1(self, tmp_path):
+        content = """\
+---
+environment: aws
+platform: eks
+iac: terraform
+cluster_name: my-cluster
+current_version: "1.33"
+target_version: "1.35"
+---
+"""
+        path = _write_recipe_md(tmp_path, content)
+        r = subprocess.run(
+            [sys.executable, "k8s-upgrade-skills/scripts/validate_recipe.py", path],
+            capture_output=True, text=True
+        )
+        assert r.returncode == 1
+        assert "건너뛰기" in r.stdout
