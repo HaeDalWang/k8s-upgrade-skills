@@ -42,6 +42,18 @@ except ImportError:
 
 
 # ══════════════════════════════════════════════════════════════
+# Phase Gate 전용 상수
+# ══════════════════════════════════════════════════════════════
+
+# Pod 분류 기준 (초)
+POD_TRANSIENT_SEC = 180   # 생성 후 이 시간 미만 → TRANSIENT (대기)
+POD_BLOCKING_SEC  = 300   # 생성 후 이 시간 초과 → BLOCKING (즉시 중단)
+
+# FailedEvict 이벤트 시간 필터 (초)
+FAILED_EVICT_WINDOW_SEC = 600  # 최근 10분 이내 이벤트만 유효
+
+
+# ══════════════════════════════════════════════════════════════
 # CLI 도구 존재 확인
 # ══════════════════════════════════════════════════════════════
 def check_tool_exists(tools: list) -> None:
@@ -271,14 +283,14 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
                 try:
                     pod_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     age_sec = (now - pod_ts).total_seconds()
-                    if age_sec < 180:
+                    if age_sec < POD_TRANSIENT_SEC:
                         result.transient.append({
                             "ns": ns, "name": name,
                             "node": pod.get("spec", {}).get("nodeName", ""),
                             "node_age_sec": int(age_sec),
                         })
                         continue
-                    elif age_sec > 300:
+                    elif age_sec > POD_BLOCKING_SEC:
                         result.blocking.append({
                             "ns": ns, "name": name,
                             "reason": f"NotReady containers: {','.join(not_ready)}",
@@ -297,7 +309,7 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
         # 1. TRANSIENT check
         if phase == "Pending" and node_name and node_name in node_creation:
             node_age = (now - node_creation[node_name]).total_seconds()
-            if node_age < 180:
+            if node_age < POD_TRANSIENT_SEC:
                 result.transient.append({
                     "ns": ns, "name": name, "node": node_name,
                     "node_age_sec": int(node_age),
@@ -340,7 +352,7 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
                 try:
                     pod_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     pending_sec = (now - pod_ts).total_seconds()
-                    if pending_sec > 300:
+                    if pending_sec > POD_BLOCKING_SEC:
                         result.blocking.append({
                             "ns": ns, "name": name, "reason": "Pending>5min",
                             "pending_min": round(pending_sec / 60, 1),
@@ -406,21 +418,39 @@ def gate_phase4(cluster_name: str, target_version: str, audit_log: str) -> int:
         audit_write("PHASE4-DATAPLANE", "PASS", f"모든 노드 v{target_version}.x + Ready ({len(nodes)}개)")
         print(f"{GREEN}✅ PHASE4-DATAPLANE PASS{NC}  모든 노드 v{target_version}.x + Ready ({len(nodes)}개)")
 
-    # 2. FailedEvict 이벤트 확인
+    # 2. FailedEvict 이벤트 확인 (최근 10분 이내만 — 오래된 이벤트 false positive 방지)
     r = run_cmd(["kubectl", "get", "events", "-A", "--field-selector", "reason=FailedEvict", "-o", "json"])
     if r.returncode == 0:
         try:
-            events = json.loads(r.stdout).get("items", [])
+            all_events = json.loads(r.stdout).get("items", [])
         except json.JSONDecodeError:
-            events = []
+            all_events = []
 
-        if events:
+        # 최근 10분 이내 이벤트만 필터링
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) if False else \
+            datetime.now(timezone.utc)
+        recent_events = []
+        for evt in all_events:
+            last_ts = (evt.get("lastTimestamp") or
+                       evt.get("eventTime") or
+                       evt.get("metadata", {}).get("creationTimestamp", ""))
+            if not last_ts:
+                recent_events.append(evt)  # 타임스탬프 없으면 포함 (안전 방향)
+                continue
+            try:
+                ts = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                if (cutoff - ts).total_seconds() <= FAILED_EVICT_WINDOW_SEC:
+                    recent_events.append(evt)
+            except ValueError:
+                recent_events.append(evt)  # 파싱 실패 시 포함 (안전 방향)
+
+        if recent_events:
             affected = []
-            for evt in events:
+            for evt in recent_events:
                 ns = evt.get("metadata", {}).get("namespace", "?")
                 msg = evt.get("message", "")
                 affected.append(f"{ns}: {msg[:80]}")
-            detail = f"FailedEvict 이벤트 {len(events)}개: {'; '.join(affected[:5])}"
+            detail = f"FailedEvict 이벤트 {len(recent_events)}개 (최근 10분): {'; '.join(affected[:5])}"
             audit_write("PHASE4-DATAPLANE", "FAIL", detail)
             print(f"{RED}❌ PHASE4-DATAPLANE FAIL{NC}  {detail}")
             audit_flush(audit_log)
@@ -552,7 +582,13 @@ def gate_phase6(tf_dir: str, audit_log: str) -> int:
     import subprocess as _sp
 
     tf_dir = str(_Path(tf_dir).resolve())  # 상대→절대 변환
-    tfplan_path = _Path(tf_dir) / ".tfplan"
+
+    # 고정 파일명 대신 임시 파일 사용 — 동시 실행 시 경쟁 조건 방지
+    import tempfile as _tempfile
+    tfplan_fd, tfplan_str = _tempfile.mkstemp(dir=tf_dir, suffix=".tfplan")
+    import os as _os
+    _os.close(tfplan_fd)
+    tfplan_path = _Path(tfplan_str)
 
     try:
         # 1. terraform plan
