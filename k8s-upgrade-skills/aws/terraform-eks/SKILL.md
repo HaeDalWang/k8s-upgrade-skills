@@ -383,7 +383,29 @@ If `services` is defined, launch a second Sub-Agent in parallel to monitor servi
 - **Read-only** — never run any write or delete commands
 - Terminate immediately when the main agent signals Phase 4 complete
 
-### 4-1. Update AMI Alias (Data Plane Only)
+### 4-1. Detect Current amiType (Architecture Preservation)
+
+**CRITICAL**: Always read the current amiType before querying AMI versions. This preserves the existing architecture (x86_64 vs arm64) and prevents accidental RI waste.
+
+```bash
+aws eks list-nodegroups --cluster-name "${CLUSTER_NAME}" --output json | \
+  jq -r '.nodegroups[]' | while read ng; do
+    aws eks describe-nodegroup --cluster-name "${CLUSTER_NAME}" --nodegroup-name "$ng" \
+      --query '{name:nodegroup.nodegroupName, amiType:nodegroup.amiType}' --output json
+  done
+```
+
+Determine the SSM path suffix based on amiType:
+
+| amiType | SSM path suffix |
+|---------|----------------|
+| `AL2023_x86_64_STANDARD` | `amazon-linux-2023/x86_64/standard` |
+| `AL2023_ARM_64_STANDARD` | `amazon-linux-2023/arm64/standard` |
+| `BOTTLEROCKET_x86_64` | `bottlerocket/aws-k8s-${TARGET_VERSION}/x86_64` |
+| `BOTTLEROCKET_ARM_64` | `bottlerocket/aws-k8s-${TARGET_VERSION}/arm64` |
+| `CUSTOM` / `WINDOWS_*` | Skip SSM query — user manages AMI manually |
+
+### 4-2. Update AMI Alias (Data Plane Only)
 
 Read the current AMI alias values:
 
@@ -391,25 +413,39 @@ Read the current AMI alias values:
 grep -E 'eks_node_ami_alias' "${TF_DIR}/terraform.tfvars"
 ```
 
-Query the latest AMI version for TARGET_VERSION from SSM:
+Query the latest AMI version for TARGET_VERSION from SSM using the amiType-derived path:
 
 ```bash
-# Bottlerocket
+# Bottlerocket x86_64 (BOTTLEROCKET_x86_64)
 aws ssm get-parameters-by-path \
   --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}/x86_64/latest" \
   --recursive \
   --query "Parameters[?ends_with(Name, 'image_version')].Value" \
   --output text
 
-# AL2023 (if used)
+# Bottlerocket arm64 (BOTTLEROCKET_ARM_64)
+aws ssm get-parameters-by-path \
+  --path "/aws/service/bottlerocket/aws-k8s-${TARGET_VERSION}/arm64/latest" \
+  --recursive \
+  --query "Parameters[?ends_with(Name, 'image_version')].Value" \
+  --output text
+
+# AL2023 x86_64 (AL2023_x86_64_STANDARD)
 aws ssm get-parameters-by-path \
   --path "/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/x86_64/standard" \
   --recursive \
   --query "Parameters[?ends_with(Name, 'image_version')].Value" \
   --output text
+
+# AL2023 arm64 (AL2023_ARM_64_STANDARD)
+aws ssm get-parameters-by-path \
+  --path "/aws/service/eks/optimized-ami/${TARGET_VERSION}/amazon-linux-2023/arm64/standard" \
+  --recursive \
+  --query "Parameters[?ends_with(Name, 'image_version')].Value" \
+  --output text
 ```
 
-Update each `eks_node_ami_alias_*` variable that exists in `terraform.tfvars` to the queried value.
+Only query the path that matches the current amiType. Update each `eks_node_ami_alias_*` variable that exists in `terraform.tfvars` to the queried value.
 
 Record to audit.log:
 
@@ -418,7 +454,7 @@ python3 scripts/audit_event.py \
   --audit-log audit.log \
   --rule-id "PHASE4-AMI" \
   --result "PASS" \
-  --detail "eks_node_ami_alias_bottlerocket: ${OLD_AMI} → ${NEW_AMI}"
+  --detail "eks_node_ami_alias_bottlerocket: ${OLD_AMI} → ${NEW_AMI} (amiType=${AMI_TYPE})"
 ```
 
 ### 4-2. Targeted Plan for MNG
