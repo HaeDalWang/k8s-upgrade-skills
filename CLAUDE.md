@@ -44,8 +44,8 @@ python3 k8s-upgrade-skills/scripts/audit_event.py \
   --result "WARN" \
   --detail "my-api: ready_endpoints=1 < min=2 (EndpointSlice)"
 
-# recipe 검증
-python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.yaml
+# recipe 검증 (recipe.md 또는 recipe.yaml 모두 지원)
+python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.md
 
 # 스킬 설치 / 업데이트 / 상태 확인
 ./install.sh --tool claude
@@ -75,7 +75,7 @@ k8s-upgrade-skills/          ← AI Agent가 읽는 스킬 디렉토리 (install
 │   ├── lib.py               ← 공통 헬퍼: GateResult, audit_flush, kubectl_json, record, _parse_cpu/_parse_mem
 │   ├── gate_check.py        ← Phase 0: 17개 사전 검증 규칙 (COM/WLS/CAP/INF)
 │   ├── phase_gate.py        ← Phase 2~7: 각 Phase Gate 함수 (phase2~phase7 서브커맨드)
-│   └── validate_recipe.py   ← recipe.yaml 스키마 검증
+│   └── validate_recipe.py   ← recipe.md / recipe.yaml 스키마 검증
 └── aws/terraform-eks/
     ├── SKILL.md             ← Phase 0~7 실행 절차 (EKS + Terraform 전용)
     └── reference.md         ← 완료 보고서 템플릿, 중단 조건 목록
@@ -165,9 +165,9 @@ Python 3.9+ 지원. `dict | None` 타입 힌트 사용 불가 → `Optional[dict
 # "EKS 클러스터를 업그레이드해줘"
 ```
 
-`recipe.yaml`이 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성한다. 이미 있으면 그대로 재사용한다.
+`recipe.md`가 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성한다. 이미 있으면 그대로 재사용한다.
 
-`example/terraform-eks/`에 EKS + Karpenter 참조 Terraform 코드와 `recipe.yaml` 예제가 있다.
+`example/terraform-eks/`에 EKS + Karpenter 참조 Terraform 코드와 `recipe.md` 예제가 있다.
 
 ## 새 규칙 추가 시 체크리스트
 
