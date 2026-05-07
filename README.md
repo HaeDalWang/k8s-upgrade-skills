@@ -2,7 +2,7 @@
 
 Kubernetes 버전 업그레이드를 안전하게 완료할 수 있도록 도와주는 **AI Agent용 Skills**.
 
-AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검증 → 업그레이드 실행 → 사후 검증까지 phase-gated 방식으로 반자동 수행합니다. 각 단계에서 사용자 확인이 필요한 경우 즉시 중단하고 보고합니다.
+AI Agent가 `recipe.md`에 정의된 클러스터 정보를 읽고, 사전 검증 → 업그레이드 실행 → 사후 검증까지 phase-gated 방식으로 반자동 수행합니다. 각 단계에서 사용자 확인이 필요한 경우 즉시 중단하고 보고합니다.
 
 ---
 
@@ -20,7 +20,7 @@ AI Agent가 `recipe.yaml`에 정의된 클러스터 정보를 읽고, 사전 검
 - 감사 로그(`audit.log`): 스크립트가 기록 주체, LLM은 읽기만 — 추적성 + Gate 신뢰성 확보
 - Phase-gated 실행: 각 단계 Gate 미통과 시 즉시 중단 및 사용자 보고
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
-- `recipe.yaml` 기반 플랫폼/IaC 자동 라우팅 — 환경에 맞는 Sub-Skill 자동 선택
+- `recipe.md` 기반 플랫폼/IaC 자동 라우팅 — 환경에 맞는 Sub-Skill 자동 선택
 - recipe 스키마 검증 (`scripts/validate_recipe.py`) — 파싱 실패를 사전 차단
 - **병렬 Sub-Agent 드레인 모니터**: terraform apply 실행과 동시에 Sub-Agent가 `kubectl get events`로 드레인 이벤트 실시간 감시. 감지 이벤트는 `audit_event.py`를 통해 audit.log에 기록
 - **Service-Aware Sub-Agent**: 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 실시간 감시 (BestEffort)
@@ -62,7 +62,7 @@ cd k8s-upgrade-skills
 ./install.sh
 # 2. 쿠버네티스를 관리하는 프로젝트 디렉토리에서 AI Agent에게 요청
 # "EKS 클러스터를 업그레이드해줘"
-# → recipe.yaml이 없으면 Agent가 필요한 정보를 물어보고 자동 생성
+# → recipe.md가 없으면 Agent가 필요한 정보를 물어보고 자동 생성
 ```
 
 > 테스트할 Kubernetes 클러스터가 없다면? [example/terraform-eks/](example/terraform-eks/)에 EKS + Karpenter 참조 인프라와 위험 시나리오 샘플이 포함되어 있습니다. Terraform으로 바로 배포하고 스킬을 테스트해볼 수 있습니다.
@@ -93,13 +93,14 @@ cd k8s-upgrade-skills
 | Antigravity | `~/.agent/skills/k8s-upgrade-skills/` |
 | GitHub Copilot | `~/.github/skills/k8s-upgrade-skills/` |
 
-### recipe.yaml 작성
+### recipe.md 작성
 
-`recipe.yaml`이 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성합니다. 이미 있으면 그대로 재사용합니다.
+`recipe.md`가 없으면 Agent가 필요한 정보를 한 번에 물어보고 자동 생성합니다. 이미 있으면 그대로 재사용합니다.
 
-직접 작성하려면 프로젝트 루트에 아래 형식으로 만드세요:
+직접 작성하려면 프로젝트 루트에 아래 형식(YAML frontmatter)으로 만드세요:
 
-```yaml
+```markdown
+---
 environment: aws          # aws | on-prem
 platform: eks             # eks | kubespray
 iac: terraform            # terraform | none
@@ -109,7 +110,6 @@ target_version: "1.35"    # 목표 버전 (따옴표 필수) — 반드시 curre
 
 # 선택 항목
 output_language: ko       # ko | en
-notes: ""                 # 특이사항
 
 # 서비스 가용성 모니터링 (선택) — 없으면 Service-Aware Sub-Agent SKIP
 services:
@@ -121,6 +121,11 @@ services:
     namespace: production
     min_endpoints: 1
     # health_check_url 없음 → BestEffort 모드 (EndpointSlice만 확인)
+---
+
+## 업그레이드 컨텍스트
+
+(현재 상황, 제약사항, 특이사항을 자유롭게 서술)
 ```
 
 > **Service-Aware Gate 한계 안내**
@@ -135,6 +140,8 @@ services:
 > - `health_check_url`은 에이전트 실행 환경에서 **외부 접근 가능한 URL**이어야 합니다 (VPC 내부 URL 불가)
 > - `health_check_url` 없이는 ALB/Ingress 전파 지연으로 인한 일시적 5xx를 감지할 수 없습니다
 > - 진정한 무중단을 원한다면 `health_check_url` 설정을 강력히 권장합니다
+
+> **`recipe.yaml` 호환**: 기존 `recipe.yaml` 파일도 여전히 지원됩니다. 다만 frontmatter 방식의 `recipe.md`가 자유 형식 컨텍스트를 함께 기술할 수 있어 권장됩니다.
 
 ### 필요 권한 (IAM / RBAC)
 
@@ -233,7 +240,7 @@ graph TD
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (Sub-Agent 보고 해석 포함)
 ├── example/terraform-eks/              # EKS + Karpenter 참조 Terraform 코드
-│   ├── recipe.yaml                    #   업그레이드 요구사항 예제 (services 필드 포함)
+│   ├── recipe.md                      #   업그레이드 요구사항 예제 (services 필드 포함)
 │   └── terraform/                     #   eks.tf, network.tf, yamls/ 등
 ├── tests/
 │   ├── test_gate_check.py             #   gate_check.py 단위 테스트
