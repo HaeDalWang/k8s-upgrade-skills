@@ -77,7 +77,35 @@ python3 scripts/gate_check.py \
   --audit-log audit.log
 ```
 
-Interpret the exit code per the convention table above. On FAIL or WARN, report `audit.log` contents to the user.
+Interpret the exit code per the convention table above.
+
+**On exit code 1 (FAIL):** Output an inline remediation checklist — do NOT generate a report file. Format:
+
+```
+## Phase 0 사전 검증 실패 — 조치 후 재실행 필요
+
+검증 시각: {timestamp} | Gate: BLOCKED
+
+### 🔴 CRITICAL — 해결 전까지 업그레이드 불가
+- **{RULE_ID}**: {상세 내용}
+  → 조치: {구체적 명령어 또는 방법}
+
+### 🟡 HIGH — 해결 권장
+- **{RULE_ID}**: {상세 내용}
+
+### 🔵 MEDIUM/INFO — 참고
+- **{RULE_ID}**: {상세 내용}
+
+재실행:
+python3 scripts/gate_check.py \
+  --cluster-name "${CLUSTER_NAME}" --current-version "${CURRENT_VERSION}" \
+  --target-version "${TARGET_VERSION}" --tf-dir "${TF_DIR}" --audit-log audit.log
+```
+
+Only include sections that have items. CRITICAL items must include a concrete remediation command.
+Do NOT generate an `upgrade-report-*-FAILED.md` file for Phase 0 failures — that is reserved for mid-upgrade failures (Phase 1–7).
+
+**On exit code 2 (WARN):** Report HIGH/MEDIUM items inline and ask the user to confirm before proceeding.
 
 The script checks these 17 rules:
 - COM-001: Cluster health (node Ready, resource pressure)
@@ -166,31 +194,26 @@ Review the plan output:
 - `aws_eks_cluster` version change → Expected
 - `aws_eks_addon` version change → Expected
 - `time_sleep` replace → Expected
-- `aws_eks_node_group` changes → **STOP**: If MNG appears in the plan, `eks_node_ami_alias_*` was accidentally modified in Phase 1. Revert it before proceeding.
+- `aws_eks_node_group` version change (kubernetes version only, NOT release_version) → **Expected when using terraform-aws-eks module** — this means MNG rolling will be triggered simultaneously with CP upgrade. Verify `eks_node_ami_alias_*` was NOT modified in Phase 1 before proceeding.
+- `aws_eks_node_group` release_version / AMI change → **STOP**: `eks_node_ami_alias_*` was accidentally modified in Phase 1. Revert it before proceeding.
 - Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
+
+> **If `aws_eks_node_group` appears in the plan (version change):** MNG rolling will start alongside CP upgrade.
+> You MUST launch the drain monitor sub-agent (step 2-2) BEFORE running terraform apply.
 
 ### 2-2. Launch Sub-Agent Drain Monitor
 
-Before running terraform apply, launch a Sub-Agent in parallel to watch kube-system events in real time.
+> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE proceeding to step 2-3.
+> Do NOT run `terraform apply` until the drain monitor is active.
+> This applies even if `aws_eks_node_group` does NOT appear in the plan — CP upgrade can still cause transient node events.
 
-**Sub-Agent instructions:**
-- Run the following command to watch Warning events:
-  ```bash
-  kubectl get events -n kube-system --watch --field-selector type=Warning \
-    -o custom-columns='TIME:.lastTimestamp,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
-  ```
-- Report to the main agent immediately and record to audit.log when any of these events are detected:
-  - `FailedMount`, `BackOff`, `OOMKilling`, `NodeNotReady`
-- Record to audit.log by calling the script:
-  ```bash
-  python3 scripts/audit_event.py \
-    --audit-log audit.log \
-    --rule-id "DRAIN-P2" \
-    --result "WARN" \
-    --detail "<REASON>: <OBJ> — <MSG>"
-  ```
-- **Read-only** — never run any write or delete commands
-- Terminate immediately when the main agent signals Phase 2 complete
+Launch the `k8s-drain-monitor` agent with these parameters:
+- `PHASE`: `P2`
+- `AUDIT_LOG`: absolute path to `audit.log`
+- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+
+The agent will watch kube-system Warning events and record `DRAIN-P2` entries to audit.log.
+Signal the agent to terminate after Phase 2 gate passes.
 
 ### 2-3. Targeted Apply
 
@@ -291,97 +314,33 @@ Phase 4 has two parts:
 
 ### 4-0. Launch Sub-Agent Drain Monitor
 
-Before the node rolling update begins, launch a Sub-Agent in parallel to watch drain events in real time.
+> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE any Phase 4 action.
+> **If MNG is already in `UPDATING` state** (triggered by Phase 2 apply): launch the agent IMMEDIATELY upon entering Phase 4 — do not wait for AMI update steps.
+> Do NOT proceed with AMI alias updates or terraform apply until the drain monitor is active.
 
-**Sub-Agent instructions:**
-- Run the following command to watch Warning events across all namespaces:
-  ```bash
-  kubectl get events -A --watch --field-selector type=Warning \
-    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
-  ```
-- Check PDB status every 30 seconds:
-  ```bash
-  kubectl get pdb -A \
-    -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed,DESIRED:.status.desiredHealthy,CURRENT:.status.currentHealthy'
-  ```
-- Report to the main agent immediately and record to audit.log when any of these events are detected:
-  - `FailedDrain` → request immediate stop + report PDB status together
-  - `DisruptionBlocked` → report PDB deadlock
-  - `ExceededGracePeriod` → report Graceful Termination failure
-  - `FailedKillPod` → report forced pod termination failure
-- Record to audit.log by calling the script:
-  ```bash
-  python3 scripts/audit_event.py \
-    --audit-log audit.log \
-    --rule-id "DRAIN-P4" \
-    --result "WARN" \
-    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
-  ```
-- Use `--result "FAIL"` when `FailedDrain` is detected, and request the main agent to stop immediately
-- **Read-only** — never run any write or delete commands
-- Terminate immediately when the main agent signals Phase 4 complete
+Launch the `k8s-drain-monitor` agent with these parameters:
+- `PHASE`: `P4`
+- `AUDIT_LOG`: absolute path to `audit.log`
+- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+
+The agent watches all-namespace Warning events, polls PDB status every 30s, and records `DRAIN-P4` entries to audit.log.
+Signal the agent to terminate after Phase 4 gate passes.
 
 ### 4-0b. Launch Service-Aware Sub-Agent (if services defined)
 
-**Skip this step if `services` field is absent in recipe.yaml.**
+**Skip this step if `services` field is absent in recipe.md/recipe.yaml.**
 
-If `services` is defined, launch a second Sub-Agent in parallel to monitor service availability during node rollout.
+> ⛔ **HARD GATE**: If `services` is defined, launch the `k8s-service-aware` agent and confirm it is running BEFORE any Phase 4 action.
+> Do NOT proceed until both drain monitor and service-aware agents are active.
 
-**Sub-Agent instructions:**
-- For each service in `services`, poll every 30 seconds:
+Launch the `k8s-service-aware` agent with these parameters:
+- `PHASE`: `P4`
+- `AUDIT_LOG`: absolute path to `audit.log`
+- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+- `SERVICES`: JSON array from recipe `services` field
 
-  1. Check EndpointSlice ready address count:
-     ```bash
-     kubectl get endpointslices -n <namespace> \
-       -l kubernetes.io/service-name=<name> -o json | python3 -c "
-     import json, sys
-     data = json.load(sys.stdin)
-     ready = sum(
-         len(ep.get('addresses', []))
-         for item in data.get('items', [])
-         for ep in item.get('endpoints', [])
-         if ep.get('conditions', {}).get('ready', False)
-     )
-     print(ready)
-     "
-     ```
-     If `ready < min_endpoints`, record WARN and report to main agent:
-     ```bash
-     python3 scripts/audit_event.py \
-       --audit-log audit.log \
-       --rule-id "SVC-P4" \
-       --result "WARN" \
-       --detail "<name>: ready_endpoints=<N> < min=<min_endpoints> (EndpointSlice)"
-     ```
-
-  2. If `health_check_url` is set, check HTTP response:
-     ```bash
-     curl -sf --max-time 5 --retry 2 <health_check_url> -o /dev/null
-     ```
-     If non-2xx or timeout, record WARN and report to main agent:
-     ```bash
-     python3 scripts/audit_event.py \
-       --audit-log audit.log \
-       --rule-id "SVC-P4" \
-       --result "WARN" \
-       --detail "<name>: health_check_url returned non-2xx or timed out"
-     ```
-
-- For services without `health_check_url`, warn **once** at startup:
-  ```
-  ⚠️ [SVC-P4] <name>: health_check_url not set — monitoring EndpointSlice only.
-  True zero-downtime cannot be guaranteed without HTTP health check.
-  ```
-  Record this warning to audit.log:
-  ```bash
-  python3 scripts/audit_event.py \
-    --audit-log audit.log \
-    --rule-id "SVC-P4" \
-    --result "INFO" \
-    --detail "<name>: BestEffort mode — EndpointSlice only, no health_check_url"
-  ```
-- **Read-only** — never run any write or delete commands
-- Terminate immediately when the main agent signals Phase 4 complete
+The agent polls EndpointSlice ready counts and HTTP health checks every 30s, records `SVC-P4` entries to audit.log.
+Signal the agent to terminate after Phase 4 gate passes.
 
 ### 4-1. Detect Current amiType (Architecture Preservation)
 
@@ -510,40 +469,32 @@ On PASS, proceed to Phase 5.
 
 ### 5-0. Launch Sub-Agent Drain Monitor
 
-Before Karpenter node replacement begins, launch a Sub-Agent in parallel to watch events in real time.
+> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
+> AMI alias update triggers Karpenter drift detection and automatic node replacement immediately.
+> Do NOT modify tfvars until the drain monitor is active.
 
-**Sub-Agent instructions:**
-- Run the following command to watch Warning events across all namespaces (same as Phase 4):
-  ```bash
-  kubectl get events -A --watch --field-selector type=Warning \
-    -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
-  ```
-- Watch NodeClaim status in parallel:
-  ```bash
-  kubectl get nodeclaims --watch \
-    -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
-  ```
-- Report to the main agent immediately and record to audit.log when any of these events are detected:
-  - All Phase 4 targets (`FailedDrain`, `DisruptionBlocked`, `ExceededGracePeriod`, `FailedKillPod`)
-  - `NodeClaimNotFound` → report NodeClaim loss
-  - `NodeClaimTerminationFailed` → report NodeClaim termination failure
-- Record to audit.log by calling the script:
-  ```bash
-  python3 scripts/audit_event.py \
-    --audit-log audit.log \
-    --rule-id "DRAIN-P5" \
-    --result "WARN" \
-    --detail "<REASON>: <NS>/<OBJ> — <MSG>"
-  ```
-- Use `--result "FAIL"` when `FailedDrain` or `NodeClaimTerminationFailed` is detected
-- **Read-only** — never run any write or delete commands
-- Terminate immediately when the main agent signals Phase 5 complete
+Launch the `k8s-drain-monitor` agent with these parameters:
+- `PHASE`: `P5`
+- `AUDIT_LOG`: absolute path to `audit.log`
+- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+
+The agent watches all-namespace Warning events, watches NodeClaim status, and records `DRAIN-P5` entries to audit.log.
+Signal the agent to terminate after Phase 5 gate passes.
 
 ### 5-0b. Launch Service-Aware Sub-Agent (if services defined)
 
-**Skip this step if `services` field is absent in recipe.yaml.**
+**Skip this step if `services` field is absent in recipe.md/recipe.yaml.**
 
-Same instructions as Phase 4-0b, with rule-id `SVC-P5` instead of `SVC-P4`.
+> ⛔ **HARD GATE**: If `services` is defined, launch the `k8s-service-aware` agent and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
+
+Launch the `k8s-service-aware` agent with these parameters:
+- `PHASE`: `P5`
+- `AUDIT_LOG`: absolute path to `audit.log`
+- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+- `SERVICES`: JSON array from recipe `services` field
+
+The agent records `SVC-P5` entries to audit.log.
+Signal the agent to terminate after Phase 5 gate passes.
 
 ### 5-1. Monitor Karpenter Node Replacement
 
@@ -638,20 +589,18 @@ Save as `upgrade-report-{CLUSTER_NAME}-{YYYYMMDD}.md` in the current working dir
 
 ### On Any Phase FAIL — Generate Failure Report Immediately
 
-When any phase gate returns exit code 1, generate a failure report **before** stopping:
+When any phase gate returns exit code 1, take the following action:
 
-| Failed Phase | Report Type | Template |
-|-------------|-------------|---------|
-| Phase 0 | Type A | 사전 검증 실패 보고서 |
-| Phase 1–6 | Type B | 업그레이드 중단 보고서 |
-| Phase 7 exit 1 | Type B | 업그레이드 중단 보고서 (최종 검증 실패) |
+| Failed Phase | Action | Template |
+|-------------|--------|---------|
+| Phase 0 | **Inline remediation checklist only** — no file generated | See Phase 0 inline format above |
+| Phase 1–6 | Generate `upgrade-report-*-FAILED.md` | Type B — 업그레이드 중단 보고서 |
+| Phase 7 exit 1 | Generate `upgrade-report-*-FAILED.md` | Type B — 업그레이드 중단 보고서 (최종 검증 실패) |
 
 **For Type B reports**, include in `{MIXED_VERSION_WARNING_OR_CLEAN}`:
-- Phase 0–1 FAIL: "업그레이드 미시작 — 클러스터 상태 변경 없음"
+- Phase 1 FAIL: "업그레이드 미시작 — 클러스터 상태 변경 없음"
 - Phase 2 FAIL: "⚠️ Control Plane 업그레이드 중 실패. 현재 버전 확인 필요"
 - Phase 3+ FAIL: "⚠️ Control Plane은 {TARGET_VERSION}으로 업그레이드됨. Data Plane은 이전 버전 상태일 수 있음"
-
-Save as `upgrade-report-{CLUSTER_NAME}-{YYYYMMDD}-FAILED.md`.
 
 ---
 

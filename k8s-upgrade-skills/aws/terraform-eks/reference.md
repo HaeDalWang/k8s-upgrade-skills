@@ -172,57 +172,58 @@ Determine the report type from the upgrade outcome, then fill every `{PLACEHOLDE
 
 ---
 
-### Type A: Phase 0 FAIL — 사전 검증 실패 보고서
+## Phase 0 Failure — Inline Remediation Output
 
-Use when: gate_check.py exits with code 1 or 2 and upgrade did not start.
+**Phase 0 failures do NOT generate a report file.**
+Output the following inline format directly in the conversation, then wait for the user to resolve and re-run gate_check.py.
 
-#### Korean
+```
+## Phase 0 사전 검증 실패 — 조치 후 재실행 필요
 
-```markdown
-# EKS 업그레이드 사전 검증 실패 보고서
+검증 시각: {PHASE0_START_TIME} | Gate: BLOCKED
 
-## 결과 요약
+### 🔴 CRITICAL — 해결 전까지 업그레이드 불가
+- **{RULE_ID}**: {상세 내용}
+  → 조치: {구체적 명령어 또는 방법}
 
-| 항목 | 값 |
-|------|-----|
-| 결과 | ❌ 사전 검증 실패 — 업그레이드 미시작 |
-| 클러스터 | {CLUSTER_NAME} |
-| 버전 (시도) | {CURRENT_VERSION} → {TARGET_VERSION} |
-| 검증 시각 | {PHASE0_START_TIME} |
-| Gate 판정 | {BLOCKED 또는 WARN} |
+### 🟡 HIGH — 해결 권장
+- **{RULE_ID}**: {상세 내용}
+  → 조치: {권장 조치}
 
----
+### 🔵 MEDIUM/INFO — 참고
+- **{RULE_ID}**: {상세 내용}
 
-## Phase 0 검증 결과
-
-| 규칙 ID | 심각도 | 결과 | 상세 |
-|---------|--------|------|------|
-{PHASE0_RULES_TABLE}
-
-<!-- audit.log의 모든 FAIL/WARN 항목을 행으로 채우세요 -->
-
----
-
-## 조치 필요 항목
-
-{CRITICAL_AND_HIGH_ITEMS_LIST}
-
-<!-- CRITICAL: 즉시 해결 필요 / HIGH: 사용자 확인 후 진행 가능 -->
-
----
-
-## 다음 단계
-
-1. 위 조치 필요 항목을 해결하세요
-2. 해결 후 `python3 scripts/gate_check.py ...`를 재실행하여 검증하세요
-3. 검증 통과 후 업그레이드를 재시작하세요
-
-자세한 대응 절차: [docs/failure-runbook.md](../../docs/failure-runbook.md)
+재실행:
+python3 scripts/gate_check.py \
+  --cluster-name "${CLUSTER_NAME}" --current-version "${CURRENT_VERSION}" \
+  --target-version "${TARGET_VERSION}" --tf-dir "${TF_DIR}" --audit-log audit.log
 ```
 
+Rules:
+- Only include sections that have items
+- CRITICAL items MUST include a concrete remediation command
+- HIGH items should include a recommended action
+- Do NOT generate an `upgrade-report-*-FAILED.md` file
+
 ---
 
-### Type B: Phase 1–6 FAIL — 업그레이드 중단 보고서
+## Report Templates (보고서)
+
+Save the report as `upgrade-report-{CLUSTER_NAME}-{YYYYMMDD}.md`.
+
+Determine the report type from the upgrade outcome, then fill every `{PLACEHOLDER}` from audit.log and recipe.yaml.
+
+**How to extract data from audit.log:**
+- Phase start time: line matching `# Started:` after `# --- Phase N` or `audit_init` block
+- Phase end time: line matching `# Finished:`
+- Phase duration: Finished timestamp − Started timestamp
+- Events: all lines matching `{timestamp} | {rule_id} | WARN|FAIL | {detail}`
+- Sub-Agent events: lines with rule-id `DRAIN-P*` or `SVC-P*`
+- Gate result: line matching `# Gate: BLOCKED|WARN|OPEN`
+
+---
+
+### Type B: Phase 1–7 FAIL — 업그레이드 중단 보고서
 
 Use when: upgrade started but stopped at Phase 1–6 due to FAIL.
 
@@ -496,4 +497,4 @@ If ANY of the following conditions is met, **STOP immediately** and report to th
 2. Do NOT attempt automatic rollback — EKS control plane upgrades are irreversible.
 3. Suggest the user investigate the root cause before retrying.
 4. If the failure is in Data Plane (Phase 4+) and Control Plane is already upgraded, the cluster is in a mixed-version state. Guide the user to complete the Data Plane upgrade manually if needed.
-5. Generate the appropriate failure report (Type A or Type B) immediately upon abort.
+5. Generate the appropriate failure report (Type B) immediately upon abort.

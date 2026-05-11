@@ -33,16 +33,12 @@ get_path() {
     claude)      echo "$HOME/.claude/skills/$SKILL_NAME" ;;
     kiro)        echo "$HOME/.kiro/skills/$SKILL_NAME" ;;
     cursor)      echo "$HOME/.cursor/skills/$SKILL_NAME" ;;
-    windsurf)    echo "$HOME/.windsurf/skills/$SKILL_NAME" ;;
-    gemini)      echo "$HOME/.gemini/skills/$SKILL_NAME" ;;
-    opencode)    echo "$HOME/.agents/skills/$SKILL_NAME" ;;
     antigravity) echo "$HOME/.agent/skills/$SKILL_NAME" ;;
-    copilot)     echo "$HOME/.github/skills/$SKILL_NAME" ;;
     *) echo "Unknown: $1" >&2; return 1 ;;
   esac
 }
 
-ALL_TOOLS="claude kiro cursor windsurf gemini opencode antigravity copilot"
+ALL_TOOLS="claude kiro cursor antigravity"
 ACTION="install"
 SELECTED=""
 FORCE=false
@@ -57,7 +53,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [--tool TOOL] [--all] [--force] [--uninstall] [--status]"
       echo ""
-      echo "Tools: claude, kiro, cursor, windsurf, gemini, opencode, antigravity, copilot"
+      echo "Tools: claude, kiro, cursor, antigravity"
       echo ""
       echo "Options:"
       echo "  --tool TOOL   Install for a specific tool"
@@ -69,7 +65,7 @@ while [[ $# -gt 0 ]]; do
       echo "Examples:"
       echo "  $0                      # interactive"
       echo "  $0 --tool claude        # Claude Code only"
-      echo "  $0 --all                # all tools"
+      echo "  $0 --all                # all supported tools (claude, kiro, cursor, antigravity)"
       echo "  $0 --all --force        # update all tools"
       echo "  $0 --uninstall          # remove all"
       echo "  $0 --status             # check status"
@@ -153,6 +149,16 @@ fi
 
 [[ -z "$SELECTED" ]] && { echo "No tools selected."; exit 1; }
 
+# Agent install path (claude only for now)
+get_agent_path() {
+  case "$1" in
+    claude) echo "$HOME/.claude/agents" ;;
+    *) echo "" ;;
+  esac
+}
+
+AGENT_SRC="$SKILL_SRC/agents"
+
 # Install
 echo ""
 echo "Installing $SKILL_NAME..."
@@ -171,6 +177,17 @@ for t in $SELECTED; do
   mkdir -p "$(dirname "$dest")"
   cp -r "$SKILL_SRC" "$dest"
   echo "  [OK]   $t -> ${dest/#$HOME/~}"
+
+  # Install agent definitions (claude only)
+  agent_dest=$(get_agent_path "$t")
+  if [[ -n "$agent_dest" && -d "$AGENT_SRC" ]]; then
+    mkdir -p "$agent_dest"
+    for agent_file in "$AGENT_SRC"/*.md; do
+      [[ -f "$agent_file" ]] || continue
+      cp "$agent_file" "$agent_dest/"
+      echo "  [OK]   $t agent: ${agent_dest/#$HOME/~}/$(basename "$agent_file")"
+    done
+  fi
 done
 
 echo ""

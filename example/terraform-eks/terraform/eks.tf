@@ -287,7 +287,7 @@ resource "kubectl_manifest" "karpenter_default_nodepool" {
             name: "default"
             group: karpenter.k8s.aws
       limits:
-        cpu: 7
+        cpu: 8
       disruption:
         consolidationPolicy: WhenEmptyOrUnderutilized 
         consolidateAfter: 10s
