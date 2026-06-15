@@ -147,9 +147,16 @@ def check_com001(cluster_name: str) -> None:
         record("COM-001", "CRITICAL", "FAIL", "kubectl 연결 실패")
         return
 
+    node_items = nodes.get("items", [])
+    # 노드 0개 = 조회 비정상 (잘못된 컨텍스트/RBAC). PASS가 아니라 FAIL.
+    if not node_items:
+        record("COM-001", "CRITICAL", "FAIL",
+               "노드 0개 조회 → kubeconfig 컨텍스트 또는 RBAC 권한을 확인하세요")
+        return
+
     not_ready = 0
     pressure = 0
-    for node in nodes.get("items", []):
+    for node in node_items:
         conditions = {
             c["type"]: c["status"]
             for c in node.get("status", {}).get("conditions", [])
@@ -196,8 +203,14 @@ def check_com002a(target_version: str) -> None:
     if nodes is None:
         record("COM-002a", "CRITICAL", "FAIL", "kubectl 연결 실패 — kubelet skew 검증 불가")
         return
+    node_items = nodes.get("items", [])
+    # 노드 0개 = 조회 비정상 (잘못된 컨텍스트/RBAC). skew 검증 자체가 불가하므로 FAIL.
+    if not node_items:
+        record("COM-002a", "CRITICAL", "FAIL",
+               "노드 0개 조회 — kubelet skew 검증 불가 → kubeconfig 컨텍스트/RBAC 권한 확인")
+        return
     violations = 0
-    for node in nodes.get("items", []):
+    for node in node_items:
         ver = node.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
         if not ver:
             continue
@@ -668,7 +681,10 @@ def check_cap001() -> None:
         }
 
     # Pod requests 합산
+    # requests 미설정 컨테이너는 사용률 계산에 0으로 잡혀 과소추정을 유발한다.
+    # 게이트 판정은 바꾸지 않되, 사각지대를 메시지로 드러낸다.
     node_used: dict[str, dict] = defaultdict(lambda: {"cpu": 0, "mem": 0})
+    no_request_containers = 0
     for pod in pods.get("items", []):
         phase = pod.get("status", {}).get("phase", "")
         if phase not in ("Running", "Pending"):
@@ -678,6 +694,8 @@ def check_cap001() -> None:
             continue
         for container in pod.get("spec", {}).get("containers", []):
             req = container.get("resources", {}).get("requests", {})
+            if not req.get("cpu") or not req.get("memory"):
+                no_request_containers += 1
             node_used[node_name]["cpu"] += _parse_cpu(req.get("cpu", "0"))
             node_used[node_name]["mem"] += _parse_mem(req.get("memory", "0"))
 
@@ -690,16 +708,22 @@ def check_cap001() -> None:
         if alloc["mem"] > 0:
             max_pct = max(max_pct, used["mem"] / alloc["mem"] * 100)
 
+    # requests 사각지대 경고 (사용률 과소추정 가능성 안내)
+    blind_spot = ""
+    if no_request_containers > 0:
+        blind_spot = (f" ⚠️ requests 미설정 컨테이너 {no_request_containers}개 — "
+                      f"실제 사용률이 이 추정치보다 높을 수 있음 (requests 기반 계산)")
+
     util = int(max_pct)
     if util > CAP_CRIT_PCT:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> {CAP_CRIT_PCT}% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요")
+               f"최대 노드 사용률 {util}% (> {CAP_CRIT_PCT}% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요{blind_spot}")
     elif util > CAP_WARN_PCT:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> {CAP_WARN_PCT}% — drain 시 여유 부족) → 노드 스케일업 권장")
+               f"최대 노드 사용률 {util}% (> {CAP_WARN_PCT}% — drain 시 여유 부족) → 노드 스케일업 권장{blind_spot}")
     else:
         record("CAP-001", "HIGH", "PASS",
-               f"최대 노드 사용률 {util}% (여유 충분)")
+               f"최대 노드 사용률 {util}% (여유 충분){blind_spot}")
 
 
 # ══════════════════════════════════════════════════════════════
