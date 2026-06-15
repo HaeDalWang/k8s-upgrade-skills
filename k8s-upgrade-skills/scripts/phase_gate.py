@@ -177,6 +177,16 @@ def gate_phase3(cluster_name: str, audit_log: str) -> int:
         audit_flush(audit_log)
         return 1
 
+    # kube-system Pod 0개 = 조회 비정상 (잘못된 컨텍스트/RBAC 필터링).
+    # 살아있는 EKS에는 coredns/kube-proxy/aws-node가 항상 존재하므로 0개는 FAIL.
+    # (Add-on 0개는 self-managed 클러스터의 정상 케이스이므로 별도 가드를 두지 않는다.)
+    if not pods:
+        audit_write("PHASE3-ADDON", "FAIL",
+                    "kube-system Pod 0개 조회 — kubeconfig 컨텍스트 또는 RBAC 권한 확인 필요")
+        print(f"{RED}❌ PHASE3-ADDON FAIL{NC}  kube-system Pod 0개 조회 — 컨텍스트/권한 확인 필요")
+        audit_flush(audit_log)
+        return 1
+
     bad_pods = []
     for pod in pods:
         name = pod.get("metadata", {}).get("name", "?")
@@ -283,14 +293,16 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
                 try:
                     pod_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     age_sec = (now - pod_ts).total_seconds()
-                    if age_sec < POD_TRANSIENT_SEC:
+                    # grace 구간(180~300초)도 TRANSIENT로 분류한다.
+                    # 조용히 통과시키면 그 순간 Gate가 NotReady Pod를 못 본 채 PASS할 수 있다.
+                    if age_sec <= POD_BLOCKING_SEC:
                         result.transient.append({
                             "ns": ns, "name": name,
                             "node": pod.get("spec", {}).get("nodeName", ""),
                             "node_age_sec": int(age_sec),
                         })
                         continue
-                    elif age_sec > POD_BLOCKING_SEC:
+                    else:
                         result.blocking.append({
                             "ns": ns, "name": name,
                             "reason": f"NotReady containers: {','.join(not_ready)}",
@@ -299,7 +311,7 @@ def classify_pods(pods_json: dict, nodes_json: dict, now=None) -> PodClassificat
                         continue
                 except ValueError:
                     pass
-            continue  # grace period (3~5분)
+            continue  # 타임스탬프 없음/파싱 실패 — 분류 보류
 
         ns = pod.get("metadata", {}).get("namespace", "?")
         name = pod.get("metadata", {}).get("name", "?")
@@ -391,6 +403,16 @@ def gate_phase4(cluster_name: str, target_version: str, audit_log: str) -> int:
         print(f"{RED}❌ PHASE4-DATAPLANE FAIL{NC}  target_version이 비어있음")
         audit_flush(audit_log)
         return 1
+
+    # 노드 0개 = 조회 결과 비정상 (잘못된 컨텍스트/RBAC 필터링).
+    # Data Plane 검증인데 노드가 없으면 PASS가 아니라 FAIL이어야 한다.
+    if not nodes:
+        audit_write("PHASE4-DATAPLANE", "FAIL",
+                    "노드 0개 조회 — kubeconfig 컨텍스트 또는 RBAC 권한 확인 필요")
+        print(f"{RED}❌ PHASE4-DATAPLANE FAIL{NC}  노드 0개 조회 — 컨텍스트/권한 확인 필요")
+        audit_flush(audit_log)
+        return 1
+
     version_pattern = re.compile(rf"v{re.escape(target_version)}\.")
     bad_nodes = []
     for node in nodes:
@@ -427,8 +449,7 @@ def gate_phase4(cluster_name: str, target_version: str, audit_log: str) -> int:
             all_events = []
 
         # 최근 10분 이내 이벤트만 필터링
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) if False else \
-            datetime.now(timezone.utc)
+        cutoff = datetime.now(timezone.utc)
         recent_events = []
         for evt in all_events:
             last_ts = (evt.get("lastTimestamp") or
