@@ -633,8 +633,8 @@ class TestGatePhase3:
             rc = phase_gate.gate_phase3("my-cluster", audit)
         assert rc == 1
 
-    def test_empty_addons_and_pods_returns_0(self, tmp_path):
-        """Add-on 0개 + Pod 0개 → exit 0."""
+    def test_empty_pods_returns_1(self, tmp_path):
+        """Add-on 0개여도 kube-system Pod 0개면 조회 비정상 → exit 1 (false PASS 방지)."""
         audit = str(tmp_path / "audit.log")
 
         def side_effect(args, **kwargs):
@@ -643,6 +643,26 @@ class TestGatePhase3:
                 return self._make_list_addons_result([])
             if "kubectl" in cmd:
                 return self._make_pods_result([])
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+
+        import subprocess
+        with unittest.mock.patch("phase_gate.run_cmd", side_effect=side_effect):
+            rc = phase_gate.gate_phase3("my-cluster", audit)
+        assert rc == 1
+        content = (tmp_path / "audit.log").read_text()
+        assert "kube-system Pod 0개" in content
+
+    def test_empty_addons_with_pods_returns_0(self, tmp_path):
+        """Add-on 0개(self-managed 클러스터) + Pod 정상 → exit 0 (Add-on 0개는 정상)."""
+        audit = str(tmp_path / "audit.log")
+        pods = [self._running_ready_pod("coredns-abc"), self._running_ready_pod("kube-proxy-xyz")]
+
+        def side_effect(args, **kwargs):
+            cmd = " ".join(args)
+            if "list-addons" in cmd:
+                return self._make_list_addons_result([])
+            if "kubectl" in cmd:
+                return self._make_pods_result(pods)
             return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
 
         import subprocess
@@ -809,14 +829,17 @@ class TestPhase3Property:
                 args=args, returncode=1, stdout="", stderr="unknown cmd",
             )
 
-        # Determine expected result
+        # Determine expected result.
+        # kube-system Pod 0개는 조회 비정상으로 간주 → addon 상태와 무관하게 FAIL(1).
         all_addons_active = all(status == "ACTIVE" for _, status in addon_statuses)
         any_addon_updating = any(status == "UPDATING" for _, status in addon_statuses)
         all_pods_healthy = all(
             phase in ("Running", "Succeeded", "Completed") and (phase != "Running" or ready)
             for phase, ready in pod_states
         )
-        if not all_addons_active and any_addon_updating and not any(
+        if not pod_states:
+            expected = 1
+        elif not all_addons_active and any_addon_updating and not any(
             status not in ("ACTIVE", "UPDATING") for _, status in addon_statuses
         ) and all_pods_healthy:
             expected = 2
@@ -979,8 +1002,8 @@ class TestGatePhase4NodeAndEvents:
             rc = phase_gate.gate_phase4("my-cluster", "1.35", audit)
         assert rc == 1
 
-    def test_empty_nodes_no_events_returns_0(self, tmp_path):
-        """노드 0개 + FailedEvict 없음 → exit 0."""
+    def test_empty_nodes_returns_1(self, tmp_path):
+        """노드 0개 조회 → 컨텍스트/RBAC 비정상으로 간주, exit 1 (false PASS 방지)."""
         audit = str(tmp_path / "audit.log")
         se = self._build_side_effect(
             self._make_nodes_result([]),
@@ -988,7 +1011,9 @@ class TestGatePhase4NodeAndEvents:
         )
         with unittest.mock.patch("phase_gate.run_cmd", side_effect=se):
             rc = phase_gate.gate_phase4("my-cluster", "1.35", audit)
-        assert rc == 0
+        assert rc == 1
+        content = (tmp_path / "audit.log").read_text()
+        assert "노드 0개" in content
 
     def test_eks_version_suffix_matches(self, tmp_path):
         """EKS 스타일 버전 (v1.35.1-eks-abc) 매칭 확인."""
@@ -1349,13 +1374,17 @@ class TestNodeVersionProperty:
                 args=args, returncode=1, stdout="", stderr="unknown cmd",
             )
 
-        # Compute expected: pass iff all nodes match version pattern AND Ready
+        # Compute expected: pass iff all nodes match version pattern AND Ready.
+        # 단, 노드 0개는 조회 비정상으로 간주 → FAIL(1) (false PASS 방지).
         version_pattern = re.compile(rf"v{re.escape(target_version)}\.")
-        all_ok = all(
-            version_pattern.match(kubelet_ver) and ready == "True"
-            for kubelet_ver, ready in nodes
-        )
-        expected = 0 if all_ok else 1
+        if not nodes:
+            expected = 1
+        else:
+            all_ok = all(
+                version_pattern.match(kubelet_ver) and ready == "True"
+                for kubelet_ver, ready in nodes
+            )
+            expected = 0 if all_ok else 1
 
         with tempfile.TemporaryDirectory() as tmpdir:
             audit_log = os.path.join(tmpdir, "audit.log")
@@ -1485,8 +1514,12 @@ class TestClassifyPods:
         assert result.stale == []
         assert result.blocking == []
 
-    def test_running_pod_grace_period_not_classified(self):
-        """Running Pod NotReady 3~5분 사이 → grace period로 분류하지 않음."""
+    def test_running_pod_grace_period_classified_transient(self):
+        """Running Pod NotReady 3~5분(grace 구간) → TRANSIENT로 분류 (조용한 PASS 방지).
+
+        이전에는 grace 구간을 분류하지 않아 Gate가 NotReady Pod를 못 본 채
+        PASS할 수 있었다. 이제는 TRANSIENT(exit 2=재확인)로 드러낸다.
+        """
         now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         pod_ts = (now - timedelta(minutes=4)).isoformat()
         pod = {
@@ -1499,7 +1532,8 @@ class TestClassifyPods:
             },
         }
         result = phase_gate.classify_pods({"items": [pod]}, {"items": []}, now=now)
-        assert result.transient == []
+        assert len(result.transient) == 1
+        assert result.transient[0]["name"] == "grace-pod"
         assert result.blocking == []
 
     def test_transient_pending_on_young_node(self):

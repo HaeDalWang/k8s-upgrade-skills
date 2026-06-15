@@ -1537,6 +1537,29 @@ class TestCom002aDefensive:
         # 크래시 없이 PASS (빈 버전은 skip)
         assert gate_check.critical_fail == 0
 
+    def test_empty_nodes_records_fail(self):
+        """노드 0개 조회 → 컨텍스트/RBAC 비정상으로 간주, CRITICAL FAIL (false PASS 방지)."""
+        with unittest.mock.patch("gate_check.kubectl_json", return_value={"items": []}):
+            gate_check.check_com002a("1.34")
+        assert gate_check.critical_fail >= 1
+
+
+class TestCom001EmptyNodes:
+    """check_com001이 노드 0개 조회 시 false PASS를 방지하는지 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    def test_empty_nodes_records_fail(self):
+        """클러스터 ACTIVE이지만 노드 0개 조회 → CRITICAL FAIL (잘못된 컨텍스트/RBAC)."""
+        with unittest.mock.patch("gate_check.kubectl_json", return_value={"items": []}), \
+             unittest.mock.patch("gate_check.run_cmd") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ACTIVE", stderr=""
+            )
+            gate_check.check_com001("test-cluster")
+        assert gate_check.critical_fail >= 1
+
 
 # ══════════════════════════════════════════════════════════════
 # 방어 코드 검증: kubectl_json None 반환 시 FAIL 기록
@@ -1587,7 +1610,6 @@ class TestKubectlJsonNoneHandling:
         with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
             gate_check.check_cap001()
         assert gate_check.high_warn >= 1
-
     def test_check_cap002_kubectl_fail_records_fail(self):
         with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
             gate_check.check_cap002()
@@ -1597,6 +1619,73 @@ class TestKubectlJsonNoneHandling:
         with unittest.mock.patch("gate_check.kubectl_json", return_value=None):
             gate_check.check_com002a("1.34")
         assert gate_check.critical_fail >= 1
+
+
+# ══════════════════════════════════════════════════════════════
+# CAP-001: requests 미설정 워크로드 사각지대 경고
+# ══════════════════════════════════════════════════════════════
+class TestCap001RequestBlindSpot:
+    """check_cap001이 requests 미설정 컨테이너 존재 시 사각지대 경고를 남기는지 검증."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    @staticmethod
+    def _nodes_pods_mock(pods_items):
+        """kubectl_json 분기 mock: nodes → 1개 노드(여유 충분), pods → 인자."""
+        nodes_json = {"items": [{
+            "metadata": {"name": "node-1"},
+            "status": {"allocatable": {"cpu": "4", "memory": "8Gi"}},
+        }]}
+
+        def side_effect(resource, all_ns=True, timeout=60):
+            if resource == "nodes":
+                return nodes_json
+            if resource == "pods":
+                return {"items": pods_items}
+            return None
+
+        return side_effect
+
+    @staticmethod
+    def _pod(name, cpu=None, mem=None):
+        """node-1에 스케줄된 Running Pod. cpu/mem None이면 requests 미설정."""
+        requests = {}
+        if cpu is not None:
+            requests["cpu"] = cpu
+        if mem is not None:
+            requests["memory"] = mem
+        return {
+            "metadata": {"name": name, "namespace": "default"},
+            "status": {"phase": "Running"},
+            "spec": {
+                "nodeName": "node-1",
+                "containers": [{"resources": {"requests": requests}}],
+            },
+        }
+
+    def test_missing_requests_adds_blind_spot_warning(self):
+        """requests 미설정 컨테이너 존재 → PASS이지만 사각지대 경고 메시지 포함."""
+        pods = [self._pod("no-req-app")]  # requests 없음
+        with unittest.mock.patch(
+            "gate_check.kubectl_json",
+            side_effect=self._nodes_pods_mock(pods),
+        ):
+            gate_check.check_cap001()
+        # 사용률은 0%로 PASS이지만 사각지대 경고가 audit에 남아야 함
+        audit_text = "\n".join(gate_check._gate.audit_lines)
+        assert "requests 미설정" in audit_text
+
+    def test_all_requests_set_no_blind_spot(self):
+        """모든 컨테이너 requests 설정 → 사각지대 경고 없음."""
+        pods = [self._pod("good-app", cpu="500m", mem="512Mi")]
+        with unittest.mock.patch(
+            "gate_check.kubectl_json",
+            side_effect=self._nodes_pods_mock(pods),
+        ):
+            gate_check.check_cap001()
+        audit_text = "\n".join(gate_check._gate.audit_lines)
+        assert "requests 미설정" not in audit_text
 
 
 # ══════════════════════════════════════════════════════════════
