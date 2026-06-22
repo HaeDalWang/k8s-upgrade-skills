@@ -1,121 +1,59 @@
 ---
 name: k8s-service-aware
 description: >
-  Kubernetes service availability monitor for EKS upgrades.
-  Polls EndpointSlice ready counts and HTTP health checks for services defined in recipe.md/recipe.yaml
-  during node rolling updates (Phase 4 MNG rolling, Phase 5 Karpenter replacement).
-  Records SVC-P4 / SVC-P5 events to audit.log via audit_event.py when endpoints drop below min_endpoints
-  or health check returns non-2xx.
-  Only active when the recipe contains a `services` field.
-tools:
-  - Bash
+  DEPRECATED — do NOT launch this as a sub-agent. Service availability monitoring for
+  EKS upgrades is now done inline: the MAIN agent runs `scripts/service_watch.py` with
+  run_in_background during Phase 4 / 5 when the recipe defines a `services` field. This
+  file documents the rationale and the service_watch.py usage. Reference only, not invocation.
 ---
 
-# k8s Service-Aware Monitor Agent
+# k8s Service-Aware Monitor — Inline Polling (sub-agent retired)
 
-You are a **read-only** service availability monitor for Kubernetes node rolling updates.
-Your job is to poll EndpointSlice ready counts and HTTP health checks for each service in the recipe,
-record anomalies to audit.log, and report to the main agent.
+> ⚠️ **This is no longer a sub-agent.** Do not launch it via the Agent tool.
+> The main agent runs `scripts/service_watch.py` directly with `run_in_background: true`.
 
 ---
 
-## Startup
+## Why the sub-agent approach was retired
 
-When launched, the main agent will pass you these parameters:
-- `PHASE`: The current phase label (e.g. `P4`, `P5`)
-- `AUDIT_LOG`: Absolute path to audit.log
-- `SKILL_SCRIPTS_DIR`: Absolute path to the `scripts/` directory containing `audit_event.py`
-- `SERVICES`: JSON array of service definitions from recipe, e.g.:
-  ```json
-  [
-    {"name": "my-api", "namespace": "production", "min_endpoints": 2, "health_check_url": "https://api.example.com/health"},
-    {"name": "my-worker", "namespace": "production", "min_endpoints": 1}
-  ]
-  ```
+Same root causes as the drain monitor (see `k8s-drain-monitor.md`):
 
-If any required parameter is missing, ask the main agent before proceeding.
+1. **Permission boundary** — a sub-agent's Bash (`python3 audit_event.py`) runs under a separate permission scope and gets prompted/denied per call.
+2. **Execution-model mismatch** — Claude Code agents are synchronous call-return. A sub-agent cannot stream a "service is degraded NOW" signal mid-poll to the main agent driving the rolling update. Service monitoring is inherently periodic polling, which fits the main agent's `run_in_background` model.
+
+Service-aware monitoring was **never exercised in the 4 production-grade upgrades (2026-06-19)** because no recipe defined `services`. It is unvalidated and must be dry-run before the first real-traffic upgrade.
 
 ---
 
-## Startup Warning (BestEffort Mode)
+## Replacement: `scripts/service_watch.py`
 
-For each service **without** `health_check_url`, output this warning once at startup and record to audit.log:
-
-```
-⚠️ [SVC-{PHASE}] <name>: health_check_url not set — monitoring EndpointSlice only (BestEffort mode).
-True zero-downtime cannot be guaranteed without HTTP health check.
-```
+Active **only when the recipe contains a `services` field.** The main agent extracts that field, serializes it to JSON, and launches:
 
 ```bash
-python3 "${SKILL_SCRIPTS_DIR}/audit_event.py" \
-  --audit-log "${AUDIT_LOG}" \
-  --rule-id "SVC-${PHASE}" \
-  --result "INFO" \
-  --detail "<name>: BestEffort mode — EndpointSlice only, no health_check_url"
+python3 scripts/service_watch.py --phase P4 --audit-log audit.log \
+  --services-json '[{"name":"my-api","namespace":"prod","min_endpoints":2,"health_check_url":"https://api/health"}]'
 ```
+
+- Launch with **`run_in_background: true`** at the start of Phase 4 / 5, alongside the drain monitor.
+- Poll interval 30s; `--max-duration` (default 3600s) is a safety stop.
+- Terminate after the phase gate passes: KillShell, or `--stop-file`.
+
+Each cycle, per service:
+
+| Check | Condition | Record |
+|-------|-----------|--------|
+| EndpointSlice ready count | `ready < min_endpoints` | `SVC-{PHASE}` WARN |
+| HTTP health (`health_check_url` set) | non-2xx or timeout | `SVC-{PHASE}` WARN |
+
+A service **without** `health_check_url` is monitored EndpointSlice-only and logged once as a **BestEffort** INFO at startup (true zero-downtime cannot be guaranteed without an HTTP probe).
+
+De-duplication is state-based: a degradation is recorded once while it persists, and dropped from the seen-set on recovery so a relapse is recorded again. Writes go through `lib.audit_append()` (fcntl-locked).
 
 ---
 
-## Poll Loop (every 30 seconds)
+## Hard constraints (enforced by the script)
 
-For each service in `SERVICES`:
-
-### Step 1: Check EndpointSlice ready count
-
-```bash
-kubectl get endpointslices -n <namespace> \
-  -l kubernetes.io/service-name=<name> -o json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-ready = sum(
-    len(ep.get('addresses', []))
-    for item in data.get('items', [])
-    for ep in item.get('endpoints', [])
-    if ep.get('conditions', {}).get('ready', False)
-)
-print(ready)
-"
-```
-
-If `ready < min_endpoints`:
-```bash
-python3 "${SKILL_SCRIPTS_DIR}/audit_event.py" \
-  --audit-log "${AUDIT_LOG}" \
-  --rule-id "SVC-${PHASE}" \
-  --result "WARN" \
-  --detail "<name>: ready_endpoints=<N> < min=<min_endpoints> (EndpointSlice)"
-```
-Report to main agent immediately.
-
-### Step 2: HTTP health check (only if `health_check_url` is set)
-
-```bash
-curl -sf --max-time 5 --retry 2 <health_check_url> -o /dev/null
-```
-
-If non-2xx or timeout:
-```bash
-python3 "${SKILL_SCRIPTS_DIR}/audit_event.py" \
-  --audit-log "${AUDIT_LOG}" \
-  --rule-id "SVC-${PHASE}" \
-  --result "WARN" \
-  --detail "<name>: health_check_url returned non-2xx or timed out (<health_check_url>)"
-```
-Report to main agent immediately.
-
----
-
-## Termination
-
-- Terminate immediately when the main agent signals the phase is complete.
-- On termination, output a one-line summary: services monitored, total WARN events, any sustained outages.
-
----
-
-## Hard Constraints
-
-1. **Read-only**: Never run `kubectl delete`, `kubectl patch`, or any write command.
-2. **No interpretation**: Report raw data. Do not decide whether to proceed or stop — that is the main agent's decision.
-3. **Poll interval**: 30 seconds between each full poll cycle. Do not poll faster.
-4. **Audit-log only via script**: Never write to audit.log directly. Always use `audit_event.py`.
-5. **No false positives**: A single failed poll is a WARN. Do not escalate to FAIL unless the main agent instructs you to.
+1. **Read-only** — only `kubectl get endpointslices` and `curl` health probes; never mutates.
+2. **No interpretation** — records raw signals; the STOP/proceed decision stays with the main agent.
+3. **Audit via shared helper** — never hand-writes audit lines; calls `lib.audit_append()`.
+</content>
