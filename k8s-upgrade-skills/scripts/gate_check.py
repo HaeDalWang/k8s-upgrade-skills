@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gate_check.py — Phase 0 사전 검증 (17개 규칙 전체)
+gate_check.py — Phase 0 사전 검증 (18개 규칙 전체)
 
 이 스크립트가 Gate를 판단합니다.
   exit code 0 = Gate OPEN  (진행 가능)
@@ -15,7 +15,7 @@ Usage:
     [--tf-dir /path/to/terraform] \\
     [--audit-log audit.log]
 
-17개 사전 검증 규칙을 실행합니다.
+18개 사전 검증 규칙을 실행합니다.
 --tf-dir 제공 시 INF-001/INF-004 (Terraform drift/recreate) 검증을 추가 실행합니다.
 """
 
@@ -308,6 +308,67 @@ def check_com003(cluster_name: str, target_version: str) -> None:
     else:
         record("COM-003", "HIGH", "PASS",
                f"모든 Add-on ACTIVE + {target_version} 호환")
+
+
+# ══════════════════════════════════════════════════════════════
+# COM-004: EKS Insights UPGRADE_READINESS 검증 (CRITICAL/HIGH)
+#
+# AWS가 라이브 API 서버 audit 로그 기반으로 유지하는 업그레이드 준비도 신호.
+# 제거(Removed)된 API를 업그레이드 전에 차단하는 핵심 안전장치.
+# 한계: 라이브 클러스터에 실제 호출된 API만 감지. 미배포 Helm chart / CI 매니페스트의
+#       deprecated API는 못 본다 → 배포 전 코드 검사는 pluto/kubent 병행 권장.
+# ══════════════════════════════════════════════════════════════
+def check_com004(cluster_name: str, target_version: str) -> None:
+    """COM-004: EKS Insights UPGRADE_READINESS 카테고리로 제거/deprecated API 사전 감지."""
+    r = run_cmd([
+        "aws", "eks", "list-insights",
+        "--cluster-name", cluster_name,
+        "--output", "json",
+    ])
+    if r.returncode != 0:
+        # 조회 실패(권한/미지원). 조용히 PASS하면 안전장치가 사라지고, 하드 블록하면
+        # INF-001식 오탐이 된다 → HIGH(사용자 확인)로 명시적 인지 유도.
+        record("COM-004", "HIGH", "FAIL",
+               "EKS Insights 조회 불가 → eks:ListInsights 권한 확인 또는 pluto/kubent로 수동 검증")
+        return
+
+    try:
+        insights = json.loads(r.stdout).get("insights", [])
+    except json.JSONDecodeError:
+        record("COM-004", "HIGH", "FAIL", "EKS Insights JSON 파싱 실패 → 수동 검증 필요")
+        return
+
+    readiness = [i for i in insights if i.get("category") == "UPGRADE_READINESS"]
+    if not readiness:
+        record("COM-004", "CRITICAL", "PASS",
+               "UPGRADE_READINESS insight 없음 (EKS가 차단 요인 미보고)")
+        return
+
+    errors: list[str] = []   # ERROR — 제거된 API 등 차단 요인
+    warns: list[str] = []    # WARNING/UNKNOWN — deprecated 또는 미확정
+    for i in readiness:
+        status = i.get("insightStatus", {}).get("status", "")
+        if status == "PASSING":
+            continue
+        name = i.get("name", "?")
+        ver = i.get("kubernetesVersion", "")
+        label = f"{name}({ver})" if ver else name
+        if status == "ERROR":
+            errors.append(label)
+        else:  # WARNING / UNKNOWN
+            warns.append(f"{label}[{status}]")
+
+    if errors:
+        record("COM-004", "CRITICAL", "FAIL",
+               f"업그레이드 차단 Insight {len(errors)}개: {', '.join(errors[:5])} → "
+               f"제거/비호환 API 해결 후 재시도 (aws eks describe-insight로 상세 확인)")
+    elif warns:
+        record("COM-004", "HIGH", "FAIL",
+               f"업그레이드 주의 Insight {len(warns)}개: {', '.join(warns[:5])} → "
+               f"deprecated API 확인 권장 (배포 전 매니페스트는 pluto/kubent 병행)")
+    else:
+        record("COM-004", "CRITICAL", "PASS",
+               f"UPGRADE_READINESS 전부 PASSING ({len(readiness)}개)")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1060,7 +1121,7 @@ def main() -> None:
 
     # ── 전체 규칙 목록 (SKIPPED 추적용) ──
     ALL_RULES = [
-        "COM-002", "COM-001", "COM-002a", "COM-003",
+        "COM-002", "COM-001", "COM-002a", "COM-003", "COM-004",
         "WLS-001", "WLS-002", "WLS-003", "WLS-004", "WLS-005", "WLS-006",
         "CAP-001", "CAP-002", "CAP-003",
         "INF-001", "INF-002", "INF-003", "INF-004",
@@ -1087,6 +1148,8 @@ def main() -> None:
         track("COM-002a")
         check_com003(args.cluster_name, args.target_version)
         track("COM-003")
+        check_com004(args.cluster_name, args.target_version)
+        track("COM-004")
 
         # ── 2단계: 워크로드 안전성 ──
         print("\n── 2단계: 워크로드 안전성 ──")
