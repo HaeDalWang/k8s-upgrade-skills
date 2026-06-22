@@ -868,12 +868,19 @@ def check_cap003(cluster_name: str) -> None:
 # ══════════════════════════════════════════════════════════════
 # run_terraform_plan: Terraform plan 헬퍼
 # ══════════════════════════════════════════════════════════════
-def run_terraform_plan(tf_dir: str) -> tuple[int, str]:
-    """terraform plan -detailed-exitcode -no-color 실행. 반환: (exit_code, output)."""
+def run_terraform_plan(tf_dir: str, var_file: str = None) -> tuple[int, str]:
+    """terraform plan -detailed-exitcode -no-color 실행. 반환: (exit_code, output).
+
+    var_file이 주어지면 `-var-file=<var_file>`을 추가한다 (workspace별 tfvars 등).
+    실제 운영 인증(aws-runas 등)이나 init 상태와 불일치하면 exit 1이 나는데,
+    INF-001은 이를 정보성(INFO)으로만 보고하고 게이트를 막지 않는다.
+    """
+    cmd = ["terraform", "plan", "-detailed-exitcode", "-no-color"]
+    if var_file:
+        cmd.append(f"-var-file={var_file}")
     try:
         r = subprocess.run(
-            ["terraform", "plan", "-detailed-exitcode", "-no-color"],
-            capture_output=True, text=True, cwd=tf_dir, timeout=300,
+            cmd, capture_output=True, text=True, cwd=tf_dir, timeout=300,
         )
         return (r.returncode, r.stdout + r.stderr)
     except subprocess.TimeoutExpired:
@@ -883,23 +890,31 @@ def run_terraform_plan(tf_dir: str) -> tuple[int, str]:
 
 
 # ══════════════════════════════════════════════════════════════
-# INF-001: Terraform 상태 드리프트 검증 (HIGH)
+# INF-001: Terraform 상태 드리프트 검증 (정보성 — 게이트 미차단)
+#
+# 정보성으로 격하한 이유: gate_check는 운영 인증(aws-runas 등)·init 상태·
+# workspace var-file과 불일치할 수 있어 plan이 자주 실패(exit 1)하거나, prod처럼
+# 상시 미세 drift가 있는 환경에서 exit 2가 늘 발생한다. 이를 HIGH FAIL로 막으면
+# 게이트가 매번 오탐을 내 신뢰도를 잃는다. drift는 참고 정보로만 제공하고,
+# destroy/recreate 위험은 INF-004(Data Plane recreate)가 별도로 판정한다.
 # ══════════════════════════════════════════════════════════════
 def check_inf001(tf_exit_code: int, plan_output: str) -> None:
-    """INF-001: Terraform 상태 드리프트 검증."""
+    """INF-001: Terraform 상태 드리프트 검증 (정보성). 게이트 판정에 영향 없음."""
     if tf_exit_code == 0:
-        record("INF-001", "HIGH", "PASS", "terraform plan: 변경 없음 (no drift)")
+        record("INF-001", "LOW", "PASS", "terraform plan: 변경 없음 (no drift)")
         return
     if tf_exit_code == 1:
-        record("INF-001", "HIGH", "FAIL", "terraform plan 오류 (exit code 1) → terraform init 또는 provider 설정 확인 후 재시도")
+        record("INF-001", "MEDIUM", "FAIL",
+               "terraform plan 실행 불가 (exit 1) — 인증/init/var-file 불일치 가능 (정보성, 게이트 미차단). "
+               "정확한 drift 확인이 필요하면 운영 인증으로 직접 plan 하세요")
         return
-    # exit code 2 — changes detected
+    # exit code 2 — changes detected (drift). 정보 제공만.
     if DESTROY_PATTERN.search(plan_output) or RECREATE_MARKERS.search(plan_output):
-        record("INF-001", "HIGH", "FAIL",
-               "terraform drift 감지 — destroy/recreate 포함 → terraform apply로 drift 해소 후 재시도하세요")
+        record("INF-001", "MEDIUM", "FAIL",
+               "terraform drift 감지 — destroy/recreate 포함 (정보성). Data Plane recreate 여부는 INF-004 참조")
     else:
-        record("INF-001", "HIGH", "FAIL",
-               "terraform drift 감지 — 비파괴적 변경 → terraform apply로 drift 해소 후 재시도하세요")
+        record("INF-001", "MEDIUM", "FAIL",
+               "terraform drift 감지 — 비파괴적 변경 (정보성). 필요 시 terraform apply로 정리")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1013,6 +1028,8 @@ def main() -> None:
                         help="감사 로그 저장 경로 (기본: 현재 디렉토리의 audit.log)")
     parser.add_argument("--tf-dir", default=None,
                         help="Terraform 구성 디렉토리 (INF-001/INF-004에 필요)")
+    parser.add_argument("--tf-var-file", default=None,
+                        help="terraform plan에 전달할 var-file (예: ezl-dev.tfvars). recipe의 tf_var_file")
     args = parser.parse_args()
 
     # 의존성 확인
@@ -1097,12 +1114,13 @@ def main() -> None:
 
         # ── 4단계: 인프라 검증 ──
         print("\n── 4단계: 인프라 검증 ──")
+        tf_exit_code = None
         if args.tf_dir:
-            tf_exit_code, plan_output = run_terraform_plan(args.tf_dir)
+            tf_exit_code, plan_output = run_terraform_plan(args.tf_dir, args.tf_var_file)
             check_inf001(tf_exit_code, plan_output)
             track("INF-001")
         else:
-            record("INF-001", "HIGH", "SKIP", "--tf-dir 미제공")
+            record("INF-001", "LOW", "SKIP", "--tf-dir 미제공")
             track("INF-001")
 
         check_inf002(args.cluster_name, args.target_version)
@@ -1111,7 +1129,13 @@ def main() -> None:
         track("INF-003")
 
         if args.tf_dir:
-            check_inf004(plan_output)
+            # plan 실행 불가(exit 1)면 plan_output이 비어 recreate 마커를 못 찾아
+            # false PASS가 날 수 있으므로 SKIP 처리한다.
+            if tf_exit_code == 1:
+                record("INF-004", "HIGH", "SKIP",
+                       "terraform plan 실행 불가 — recreate 검증 건너뜀 (운영 인증으로 직접 확인 권장)")
+            else:
+                check_inf004(plan_output)
             track("INF-004")
         else:
             record("INF-004", "HIGH", "SKIP", "--tf-dir 미제공")

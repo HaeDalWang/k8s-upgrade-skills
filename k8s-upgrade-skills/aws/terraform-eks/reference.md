@@ -35,7 +35,7 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 | Phase 1 | terraform.tfvars 버전 업데이트 | 변경값 grep 확인 | CP 버전만 수정, AMI는 Phase 4에서 처리 |
 | Phase 2 | Control Plane 업그레이드 | CP status=ACTIVE + 목표 버전 | 비가역적 작업. 소요 시간 편차 큼 (참고값: 8~40분) |
 | Phase 3 | Add-on 안정화 검증 | 전체 Add-on ACTIVE | CP 업그레이드 후 자동 재조정 대기 |
-| Phase 4 | Data Plane 롤링 업데이트 | 전체 노드 Ready + 목표 버전 | AMI 업데이트 후 MNG targeted apply. Sub-Agent 드레인 감시 병행 |
+| Phase 4 | Data Plane 롤링 업데이트 | 전체 노드 Ready + 목표 버전 | AMI 업데이트 후 MNG targeted apply. drain_watch.py 인라인 감시 병행 |
 | Phase 5 | Karpenter 노드 교체 | 전체 NodeClaim 목표 버전 | Karpenter 미사용 시 SKIP |
 | Phase 6 | Terraform 전체 동기화 | plan에 예상 외 변경 없음 | 잔여 drift 정리 |
 | Phase 7 | 최종 검증 및 보고서 | unhealthy Pod 0개 + Insights PASSING | 완료 보고서 자동 생성 |
@@ -53,7 +53,7 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 | my-worker | production | 1 | 미설정 | EndpointSlice only (BestEffort) |
 
 services 필드 없을 때:
-"서비스 가용성 모니터링 미설정 — Sub-Agent 미투입. EndpointSlice 감시 없음."
+"서비스 가용성 모니터링 미설정 — 인라인 service_watch 미투입 (recipe에 services 없음). EndpointSlice 감시 없음."
 -->
 
 ---
@@ -114,7 +114,7 @@ services 필드 없을 때:
 | Phase 1 | Update terraform.tfvars version | grep verification | CP version only; AMI deferred to Phase 4 |
 | Phase 2 | Control Plane upgrade | CP status=ACTIVE + target version | Irreversible. Duration varies (ref: 8–40 min) |
 | Phase 3 | Add-on stabilization | All add-ons ACTIVE | Wait for reconciliation after CP upgrade |
-| Phase 4 | Data Plane rolling update | All nodes Ready + target version | AMI update + MNG targeted apply. Sub-Agent drain monitor active |
+| Phase 4 | Data Plane rolling update | All nodes Ready + target version | AMI update + MNG targeted apply. Inline drain monitor (drain_watch.py) active |
 | Phase 5 | Karpenter node replacement | All NodeClaims at target version | SKIP if Karpenter not used |
 | Phase 6 | Full Terraform sync | No unexpected changes in plan | Clean up remaining drift |
 | Phase 7 | Final validation + report | 0 unhealthy pods + Insights PASSING | Completion report auto-generated |
@@ -167,7 +167,7 @@ Determine the report type from the upgrade outcome, then fill every `{PLACEHOLDE
 - Phase end time: line matching `# Finished:`
 - Phase duration: Finished timestamp − Started timestamp
 - Events: all lines matching `{timestamp} | {rule_id} | WARN|FAIL | {detail}`
-- Sub-Agent events: lines with rule-id `DRAIN-P*` or `SVC-P*`
+- Inline monitor events: lines with rule-id `DRAIN-P*` or `SVC-P*`
 - Gate result: line matching `# Gate: BLOCKED|WARN|OPEN`
 
 ---
@@ -218,7 +218,7 @@ Determine the report type from the upgrade outcome, then fill every `{PLACEHOLDE
 - Phase end time: line matching `# Finished:`
 - Phase duration: Finished timestamp − Started timestamp
 - Events: all lines matching `{timestamp} | {rule_id} | WARN|FAIL | {detail}`
-- Sub-Agent events: lines with rule-id `DRAIN-P*` or `SVC-P*`
+- Inline monitor events: lines with rule-id `DRAIN-P*` or `SVC-P*`
 - Gate result: line matching `# Gate: BLOCKED|WARN|OPEN`
 
 ---
@@ -278,7 +278,7 @@ Use when: upgrade started but stopped at Phase 1–6 due to FAIL.
 |------|-----------|------|------|
 {WARN_FAIL_EVENTS_TABLE}
 
-<!-- audit.log에서 WARN/FAIL 항목 전체 추출. Sub-Agent 이벤트(DRAIN-P*, SVC-P*) 포함 -->
+<!-- audit.log에서 WARN/FAIL 항목 전체 추출. 인라인 모니터 이벤트(DRAIN-P*, SVC-P*) 포함 -->
 
 ---
 
@@ -473,7 +473,7 @@ If ANY of the following conditions is met, **STOP immediately** and report to th
 | WLS-003 | PV AZ에 노드 1개만 — drain 시 재스케줄 불가 | CRITICAL |
 | WLS-006 | Required affinity + 매칭 노드 부족 | HIGH |
 | CAP-001 | 전체 노드 CPU/MEM > 90% — Pod Pending 확정 | HIGH |
-| INF-001 | Terraform plan에 예상 외 destroy 포함 | HIGH |
+| INF-004 | Data Plane recreate 감지 (aws_eks_node_group 등 destroy-recreate) | CRITICAL |
 | INF-002 | SSM AMI 조회 결과 비어있음 | CRITICAL |
 
 ### Phase 2~7 (실행 중) — phase_gate.py 검증
