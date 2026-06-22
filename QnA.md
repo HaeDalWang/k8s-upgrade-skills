@@ -58,7 +58,9 @@ Karpenter 노드는 IaC에서 AMI alias를 업데이트하면 Karpenter의 Drift
 
 ### Q: Fargate 프로파일은요?
 
-지원하지 않습니다. Fargate Pod는 프로비저닝 시점에 최신 런타임이 적용되므로 별도의 노드 업그레이드 절차는 불필요하나, Skill 차원에서의 Pod 재시작 여부 검증은 포함되지 않습니다
+Fargate 프로파일 정의(IaC) 자체는 변경하지 않습니다. 다만 Control Plane 업그레이드 후 Fargate 노드는 **Pod가 재시작되어야 kubelet 버전이 갱신**되므로, Phase 7-0에서 잔류한 구버전 Fargate 노드를 감지하고 해당 Deployment(`coredns`, `karpenter` 등)를 `rollout restart`하여 새 버전 노드로 재스케줄합니다.
+
+이는 실제 프로덕션 업그레이드에서 Fargate 노드 잔류가 Phase 7 최종 검증 FAIL을 유발했던 사례를 반영해 정식 절차로 포함한 것입니다. (`coredns` + `karpenter`를 선제 재시작하면 Phase 7을 1회에 통과합니다.)
 
 ---
 

@@ -30,19 +30,21 @@ python3 k8s-upgrade-skills/scripts/phase_gate.py phase4 \
   --target-version 1.34 \
   --audit-log audit.log
 
-# Sub-Agent 감지 이벤트를 audit.log에 기록 (Sub-Agent가 호출)
+# 인라인 드레인 모니터 — 메인 에이전트가 run_in_background로 실행 (sub-agent 아님)
+python3 k8s-upgrade-skills/scripts/drain_watch.py \
+  --phase P4 --scope all --audit-log audit.log
+
+# 인라인 서비스 모니터 — recipe에 services가 있을 때만 (Phase 4/5)
+python3 k8s-upgrade-skills/scripts/service_watch.py \
+  --phase P4 --audit-log audit.log \
+  --services-json '[{"name":"my-api","namespace":"prod","min_endpoints":2}]'
+
+# 단일 이벤트 직접 기록 (LLM-side 이벤트용 — lib.audit_append 래퍼)
 python3 k8s-upgrade-skills/scripts/audit_event.py \
   --audit-log audit.log \
   --rule-id "DRAIN-P4" \
   --result "WARN" \
   --detail "FailedDrain: node/ip-10-0-1-23 — PDB my-api disruptionsAllowed=0"
-
-# Service-Aware Sub-Agent 이벤트 기록 예시
-python3 k8s-upgrade-skills/scripts/audit_event.py \
-  --audit-log audit.log \
-  --rule-id "SVC-P4" \
-  --result "WARN" \
-  --detail "my-api: ready_endpoints=1 < min=2 (EndpointSlice)"
 
 # recipe 검증 (recipe.md 또는 recipe.yaml 모두 지원)
 python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.md
@@ -72,17 +74,27 @@ python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.md
 k8s-upgrade-skills/          ← AI Agent가 읽는 스킬 디렉토리 (install.sh로 전역 설치됨)
 ├── SKILL.md                 ← 루트 라우터: recipe 검증 + (environment, platform, iac) 기반 Sub-Skill 분기
 ├── scripts/
-│   ├── lib.py               ← 공통 헬퍼: GateResult, audit_flush, kubectl_json, record, _parse_cpu/_parse_mem
+│   ├── lib.py               ← 공통 헬퍼: GateResult, audit_flush, audit_append, kubectl_json, record, _parse_cpu/_parse_mem
 │   ├── gate_check.py        ← Phase 0: 17개 사전 검증 규칙 (COM/WLS/CAP/INF)
 │   ├── phase_gate.py        ← Phase 2~7: 각 Phase Gate 함수 (phase2~phase7 서브커맨드)
+│   ├── drain_watch.py       ← 인라인 드레인 모니터 (백그라운드 폴링: 이벤트/PDB/NodeClaim → DRAIN-P*)
+│   ├── service_watch.py     ← 인라인 서비스 모니터 (EndpointSlice ready + HTTP health → SVC-P*)
+│   ├── audit_event.py       ← 단일 이벤트 audit.log 기록 CLI (lib.audit_append 래퍼)
 │   └── validate_recipe.py   ← recipe.md / recipe.yaml 스키마 검증
+├── agents/                  ← 인라인 전환 근거(rationale) 문서 (sub-agent 정의 아님, 호출 금지)
+│   ├── k8s-drain-monitor.md
+│   └── k8s-service-aware.md
 └── aws/terraform-eks/
     ├── SKILL.md             ← Phase 0~7 실행 절차 (EKS + Terraform 전용)
     └── reference.md         ← 완료 보고서 템플릿, 중단 조건 목록
 
 tests/
 ├── test_gate_check.py       ← gate_check.py 단위 테스트
-└── test_phase_gate.py       ← phase_gate.py 단위 테스트
+├── test_phase_gate.py       ← phase_gate.py 단위 테스트
+├── test_drain_watch.py      ← drain_watch.py 단위 테스트
+├── test_service_watch.py    ← service_watch.py 단위 테스트
+├── test_audit_event.py      ← audit_event.py 단위 테스트
+└── test_validate_recipe.py  ← validate_recipe.py 단위 테스트
 
 docs/
 ├── required-permissions.md  ← IAM/RBAC 최소 권한 (Phase별 분리)
@@ -100,6 +112,7 @@ validate_recipe.py            (stdlib only, 독립)
 `lib.py`의 핵심 함수:
 - `kubectl_json(resource, all_ns, timeout)` → `Optional[dict]`: 실패 시 `None` 반환 (빈 dict `{}`와 구분)
 - `audit_flush(path)`: `_gate.audit_lines`를 append 모드로 파일에 기록
+- `audit_append(path, rule_id, result, detail)`: fcntl 락으로 단일 라인 append (인라인 모니터 `drain_watch`/`service_watch` 및 `audit_event.py` 공용 — 다른 프로세스와 동시 쓰기 안전)
 - `record(rule_id, severity, status, message)`: 글로벌 `_gate` 상태에 결과 누적
 - `reset_gate()`: 테스트 간 글로벌 상태 초기화 (테스트 fixture에서 `autouse=True`)
 
