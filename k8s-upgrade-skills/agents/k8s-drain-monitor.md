@@ -1,106 +1,70 @@
 ---
 name: k8s-drain-monitor
 description: >
-  Kubernetes node drain event monitor for EKS upgrades.
-  Watches kubectl Warning events in real time during node rolling updates (MNG or Karpenter).
-  Detects FailedDrain, DisruptionBlocked, ExceededGracePeriod, FailedKillPod, NodeNotReady, BackOff, OOMKilling events
-  and records them to audit.log via audit_event.py.
-  Use during Phase 2 (if MNG in plan), Phase 4 (MNG rolling), and Phase 5 (Karpenter replacement).
-tools:
-  - Bash
+  DEPRECATED — do NOT launch this as a sub-agent. Drain monitoring for EKS upgrades
+  is now done inline: the MAIN agent runs `scripts/drain_watch.py` with
+  run_in_background during Phase 2 / 4 / 5. This file documents the rationale and
+  the drain_watch.py usage. It is kept for reference, not for invocation.
 ---
 
-# k8s Drain Monitor Agent
+# k8s Drain Monitor — Inline Polling (sub-agent retired)
 
-You are a **read-only** drain event monitor for Kubernetes node rolling updates.
-Your sole job is to watch for Warning events, classify them, record to audit.log, and report to the main agent.
+> ⚠️ **This is no longer a sub-agent.** Do not launch it via the Agent tool.
+> The main agent runs `scripts/drain_watch.py` directly with `run_in_background: true`.
 
 ---
 
-## Startup
+## Why the sub-agent approach was retired
 
-When launched, the main agent will pass you these parameters:
-- `PHASE`: The current phase label (e.g. `P2`, `P4`, `P5`)
-- `AUDIT_LOG`: Absolute path to audit.log
-- `SKILL_SCRIPTS_DIR`: Absolute path to the `scripts/` directory containing `audit_event.py`
+The sub-agent model was specified as a `⛔ HARD GATE` but **failed to run in all 4 production-grade upgrades (2026-06-19)**. Two root causes:
 
-If any parameter is missing, ask the main agent before proceeding.
+1. **Permission boundary** — a sub-agent's Bash (`python3 audit_event.py`) runs under a separate permission scope, so every audit write triggered a fresh prompt and was denied. The 1st upgrade abandoned the sub-agent and fell back to inline handling (which worked).
+2. **Execution-model mismatch (the deeper one)** — Claude Code agents are **synchronous call-return**. A sub-agent cannot stream a "STOP now" signal to the main agent *while* it watches; it only returns one final message. So "watch in real time and interrupt the apply on `FailedDrain`" is structurally impossible in the sub-agent model. `kubectl --watch` (infinite blocking) makes this worse.
 
----
-
-## Watch Command
-
-For Phase 4 and Phase 5 (all namespaces):
-```bash
-kubectl get events -A --watch --field-selector type=Warning \
-  -o custom-columns='TIME:.lastTimestamp,NS:.metadata.namespace,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
-```
-
-For Phase 2 (kube-system only):
-```bash
-kubectl get events -n kube-system --watch --field-selector type=Warning \
-  -o custom-columns='TIME:.lastTimestamp,REASON:.reason,OBJ:.involvedObject.name,MSG:.message'
-```
-
-Also poll PDB status every 30 seconds during Phase 4 and 5:
-```bash
-kubectl get pdb -A \
-  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed,DESIRED:.status.desiredHealthy,CURRENT:.status.currentHealthy'
-```
-
-For Phase 5, also watch NodeClaim status:
-```bash
-kubectl get nodeclaims --watch \
-  -o custom-columns='NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
-```
+Drain monitoring is fundamentally **periodic snapshot polling**, not a stream. Polling fits the main agent's `run_in_background` model perfectly, reuses the main session's tool permissions, and costs no extra agent context.
 
 ---
 
-## Detection Rules
+## Replacement: `scripts/drain_watch.py`
 
-Report to the main agent **immediately** and record to audit.log when ANY of these reasons appear:
-
-| Reason | Severity | result flag | Action |
-|--------|----------|-------------|--------|
-| `FailedDrain` | FAIL | `--result FAIL` | Report + request main agent to STOP immediately |
-| `DisruptionBlocked` | WARN | `--result WARN` | Report PDB deadlock details |
-| `ExceededGracePeriod` | WARN | `--result WARN` | Report graceful termination failure |
-| `FailedKillPod` | WARN | `--result WARN` | Report forced pod termination failure |
-| `NodeNotReady` | WARN | `--result WARN` | Report (expected during rolling — note as transient) |
-| `BackOff` | WARN | `--result WARN` | Report if persistent (>3 occurrences same pod) |
-| `OOMKilling` | WARN | `--result WARN` | Report immediately |
-| `FailedMount` | WARN | `--result WARN` | Report if on non-terminating pod |
-| `NodeClaimNotFound` | WARN | `--result WARN` | Phase 5 only — report NodeClaim loss |
-| `NodeClaimTerminationFailed` | FAIL | `--result FAIL` | Phase 5 only — report + request main agent to STOP |
-
----
-
-## Recording to audit.log
-
-For each detected event:
+The main agent launches this in the background at the start of Phase 2 / 4 / 5:
 
 ```bash
-python3 "${SKILL_SCRIPTS_DIR}/audit_event.py" \
-  --audit-log "${AUDIT_LOG}" \
-  --rule-id "DRAIN-${PHASE}" \
-  --result "WARN" \
-  --detail "<REASON>: <NS>/<OBJ> — <MSG>"
+# Phase 2 (Control Plane) — kube-system scope
+python3 scripts/drain_watch.py --phase P2 --scope kube-system --audit-log audit.log
+
+# Phase 4 (MNG rolling) / Phase 5 (Karpenter) — all namespaces
+python3 scripts/drain_watch.py --phase P4 --scope all --audit-log audit.log
+python3 scripts/drain_watch.py --phase P5 --scope all --audit-log audit.log
 ```
 
-Use `--result "FAIL"` for `FailedDrain` and `NodeClaimTerminationFailed`.
+- Launch with **`run_in_background: true`**.
+- Poll interval defaults to 30s; `--max-duration` (default 3600s) is a safety stop so it never runs forever.
+- Check progress with BashOutput. A `FAIL`-severity line means **STOP and investigate**.
+- Terminate after the phase gate passes: KillShell, or pass `--stop-file <path>` and `touch` it.
+
+It writes `DRAIN-{PHASE}` entries to audit.log via the shared `lib.audit_append()` (fcntl-locked — safe to write concurrently with the gate scripts).
 
 ---
 
-## Termination
+## What drain_watch.py detects each cycle
 
-- Terminate immediately when the main agent signals the phase is complete.
-- On termination, output a one-line summary: total events detected, any FAIL events.
+| Source | Signal | Severity |
+|--------|--------|----------|
+| Warning events | `FailedDrain`, `NodeClaimTerminationFailed` | FAIL |
+| Warning events | `DisruptionBlocked`, `ExceededGracePeriod`, `FailedKillPod`, `NodeNotReady`, `NodeNotSchedulable`, `OOMKilling`, `FailedMount`, `NodeClaimNotFound`, `Evicted` | WARN |
+| PDB status | `disruptionsAllowed == 0` (expectedPods > 0) — drain blocked | WARN |
+| NodeClaim status (Phase 5) | `Ready != True` with a reason | WARN |
+
+**Intentionally excluded**: `BackOff` — it fires constantly from CrashLoop/ImagePull unrelated to draining and would flood audit.log (the original rule only reported it ">3 occurrences"). drain_watch focuses on genuine drain-risk signals.
+
+De-duplication: events are keyed by `uid:count` (a higher count = a genuine recurrence, re-emitted). PDB/NodeClaim are state-based — recorded once while active, dropped from the seen-set when resolved so a recurrence is recorded again.
 
 ---
 
-## Hard Constraints
+## Hard constraints (enforced by the script, not the LLM)
 
-1. **Read-only**: Never run `kubectl delete`, `kubectl drain`, `kubectl cordon`, or any write command.
-2. **No interpretation**: Report raw event data. Do not decide whether to proceed or stop — that is the main agent's decision.
-3. **No silence**: If the watch command exits unexpectedly, report it to the main agent immediately and attempt to restart.
-4. **Audit-log only via script**: Never write to audit.log directly. Always use `audit_event.py`.
+1. **Read-only** — drain_watch.py only runs `kubectl get`; it never drains, cordons, or deletes.
+2. **No interpretation** — it records raw signals. The decision to STOP/proceed stays with the main agent reading the audit/output.
+3. **Audit via shared helper** — it never hand-writes audit lines; it calls `lib.audit_append()`.
+</content>
