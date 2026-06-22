@@ -119,7 +119,7 @@ Using the Plan Template from [aws/terraform-eks/reference.md](aws/terraform-eks/
 1. Fill all `{PLACEHOLDER}` fields from the recipe
 2. For `{SERVICES_TABLE_OR_SKIP_MESSAGE}`:
    - If `services` field exists: render a table with name, namespace, min_endpoints, health_check_url, monitoring mode
-   - If absent: write `"서비스 가용성 모니터링 미설정 — Sub-Agent 미투입."`
+   - If absent: write `"서비스 가용성 모니터링 미설정 — 인라인 service_watch 미투입 (recipe에 services 없음)."`
 3. For `{PLAN_GENERATED_AT}`:
    - `output_language: ko` → KST (UTC+9) 기준 타임스탬프 (예: `2026-05-06 11:21 KST`)
    - `output_language: en` → UTC 기준 타임스탬프 (예: `2026-05-06 02:21 UTC`)

@@ -18,9 +18,13 @@ Exit codes:
 """
 
 import argparse
-import fcntl
 import sys
-from datetime import datetime, timezone
+
+try:
+    from lib import audit_append
+except ImportError:
+    print("ERROR: lib.py not found. Run install.sh --force to reinstall.", file=sys.stderr)
+    sys.exit(1)
 
 
 VALID_RESULTS = {"PASS", "WARN", "FAIL", "INFO"}
@@ -41,14 +45,8 @@ def main() -> int:
     parser.add_argument("--detail", required=True, help="이벤트 상세 내용")
     args = parser.parse_args()
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    line = f"{now} | {args.rule_id} | {args.result} | {args.detail}\n"
-
     try:
-        with open(args.audit_log, "a", encoding="utf-8") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(line)
-            fcntl.flock(f, fcntl.LOCK_UN)
+        audit_append(args.audit_log, args.rule_id, args.result, args.detail)
     except OSError as e:
         print(f"ERROR: audit.log 쓰기 실패: {e}", file=sys.stderr)
         return 1

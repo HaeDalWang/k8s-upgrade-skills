@@ -134,26 +134,26 @@ terraform plan  # 변경 내용 재확인
 
 ## Phase 4: Data Plane Rolling Update 문제
 
-### Sub-Agent 드레인 모니터 보고 해석
+### 인라인 드레인 모니터 이벤트 해석
 
-Sub-Agent가 audit.log에 기록하고 메인 에이전트에 보고하는 이벤트별 대응:
+`drain_watch.py`(메인 에이전트가 백그라운드 폴링으로 실행)가 audit.log에 기록하는 이벤트별 대응:
 
 | REASON | result | 의미 | 즉각 조치 |
 |--------|--------|------|---------|
 | `FailedDrain` | FAIL | PDB 또는 Graceful Termination으로 drain 차단 | 즉시 중단 → PDB 확인 |
-| `DisruptionBlocked` | WARN | PDB disruptionsAllowed=0 | PDB 완화 또는 레플리카 증가 |
+| `DisruptionBlocked(PDB)` | WARN | PDB disruptionsAllowed=0 | PDB 완화 또는 레플리카 증가 |
 | `ExceededGracePeriod` | WARN | Pod가 terminationGracePeriodSeconds 초과 | 해당 Pod 로그 확인 |
 | `FailedKillPod` | WARN | kubelet이 Pod 강제 종료 실패 | 노드 상태 확인 |
 
 ```bash
-# Sub-Agent 보고 확인 (audit.log에서 DRAIN-P4 항목 조회)
+# 모니터 기록 확인 (audit.log에서 DRAIN-P4 항목 조회)
 grep "DRAIN-P4" audit.log
 ```
 
 ### FailedDrain 이벤트 (PDB 차단)
 
 ```bash
-# 1. Sub-Agent 보고 내용 확인
+# 1. 모니터 기록 내용 확인
 grep "DRAIN-P4\|DRAIN-P5" audit.log | grep FAIL
 
 # 2. 차단 원인 확인
