@@ -6,6 +6,7 @@ Task 8.11: Unit 테스트 (Edge case 및 통합 검증)
 """
 
 import inspect
+import json
 import subprocess
 import sys
 import unittest.mock
@@ -31,13 +32,13 @@ def reset_counters():
 
 
 class TestAllRulesOrder:
-    """17개 규칙 ALL_RULES 순서 확인."""
+    """18개 규칙 ALL_RULES 순서 확인."""
 
     def test_all_rules_order(self):
-        """main() 소스에 ALL_RULES 17개 항목이 올바른 순서로 정의되어 있는지 확인."""
+        """main() 소스에 ALL_RULES 18개 항목이 올바른 순서로 정의되어 있는지 확인."""
         source = inspect.getsource(gate_check.main)
         expected = [
-            "COM-002", "COM-001", "COM-002a", "COM-003",
+            "COM-002", "COM-001", "COM-002a", "COM-003", "COM-004",
             "WLS-001", "WLS-002", "WLS-003", "WLS-004", "WLS-005", "WLS-006",
             "CAP-001", "CAP-002", "CAP-003",
             "INF-001", "INF-002", "INF-003", "INF-004",
@@ -45,8 +46,8 @@ class TestAllRulesOrder:
         assert "ALL_RULES" in source
         for rule in expected:
             assert f'"{rule}"' in source, f"{rule} not found in ALL_RULES"
-        # 17개 항목 확인
-        assert len(expected) == 17
+        # 18개 항목 확인
+        assert len(expected) == 18
 
 
 class TestTfDirNotProvidedSkipsInfRules:
@@ -93,7 +94,7 @@ class TestTfDirNonexistentExits1:
 
 
 class TestCom002CriticalFailSkipsRest:
-    """COM-002 CRITICAL FAIL 시 나머지 17개 규칙 SKIP 확인."""
+    """COM-002 CRITICAL FAIL 시 나머지 규칙 SKIP 확인."""
 
     def test_com002_critical_fail_skips_rest(self):
         with unittest.mock.patch('sys.argv', [
@@ -110,8 +111,8 @@ class TestCom002CriticalFailSkipsRest:
                     gate_check.main()
         assert exc_info.value.code == 1
         assert gate_check.critical_fail >= 1
-        # 17개 규칙 전부 기록 (1 FAIL + 16 SKIP)
-        assert gate_check.total_rules == 17
+        # 18개 규칙 전부 기록 (1 FAIL + 17 SKIP)
+        assert gate_check.total_rules == 18
 
 
 class TestCom003EmptyAddonsPass:
@@ -124,6 +125,81 @@ class TestCom003EmptyAddonsPass:
             gate_check.check_com003("test-cluster", "1.34")
         assert gate_check.total_pass == 1
         assert gate_check.critical_fail == 0
+
+
+class TestCom004UpgradeReadiness:
+    """COM-004: EKS Insights UPGRADE_READINESS 검증."""
+
+    def _insights(self, items):
+        return subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"insights": items}), stderr="")
+
+    def test_error_status_is_critical_fail(self):
+        """UPGRADE_READINESS ERROR(제거 API) → CRITICAL FAIL (업그레이드 차단)."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = self._insights([{
+                "category": "UPGRADE_READINESS", "name": "Deprecated APIs removed in 1.34",
+                "kubernetesVersion": "1.34",
+                "insightStatus": {"status": "ERROR"},
+            }])
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.critical_fail == 1
+        assert gate_check.total_pass == 0
+
+    def test_warning_status_is_high_warn(self):
+        """UPGRADE_READINESS WARNING(deprecated) → HIGH WARN (사용자 확인)."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = self._insights([{
+                "category": "UPGRADE_READINESS", "name": "Deprecated APIs",
+                "insightStatus": {"status": "WARNING"},
+            }])
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.high_warn == 1
+        assert gate_check.critical_fail == 0
+
+    def test_all_passing_is_pass(self):
+        """UPGRADE_READINESS 전부 PASSING → PASS."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = self._insights([{
+                "category": "UPGRADE_READINESS", "name": "ok",
+                "insightStatus": {"status": "PASSING"},
+            }])
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.total_pass == 1
+        assert gate_check.critical_fail == 0
+
+    def test_no_readiness_insight_passes(self):
+        """UPGRADE_READINESS 카테고리 없음 → PASS (EKS가 차단 요인 미보고)."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = self._insights([{
+                "category": "CONFIGURATION", "name": "other",
+                "insightStatus": {"status": "ERROR"},
+            }])
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.total_pass == 1
+        assert gate_check.critical_fail == 0
+
+    def test_query_failure_is_high_warn_not_silent(self):
+        """list-insights 조회 실패 → HIGH WARN (조용히 통과하지 않음, 하드 블록도 아님)."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="denied")
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.high_warn == 1
+        assert gate_check.total_pass == 0
+        assert gate_check.critical_fail == 0
+
+    def test_error_takes_precedence_over_warning(self):
+        """ERROR와 WARNING 공존 시 ERROR(CRITICAL)가 우선."""
+        with unittest.mock.patch.object(gate_check, 'run_cmd') as mock_run:
+            mock_run.return_value = self._insights([
+                {"category": "UPGRADE_READINESS", "name": "removed",
+                 "insightStatus": {"status": "ERROR"}},
+                {"category": "UPGRADE_READINESS", "name": "deprecated",
+                 "insightStatus": {"status": "WARNING"}},
+            ])
+            gate_check.check_com004("test-cluster", "1.34")
+        assert gate_check.critical_fail == 1
+        assert gate_check.high_warn == 0
 
 
 class TestCap003EmptyNodegroupsPass:

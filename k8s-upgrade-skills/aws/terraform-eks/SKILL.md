@@ -47,7 +47,7 @@ If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` comm
 Print this plan to the user before starting:
 
 ```
-[Phase 0] Pre-flight Validation     → Gate: gate_check.py (17 rules, exit code)
+[Phase 0] Pre-flight Validation     → Gate: gate_check.py (18 rules, exit code)
 [Phase 1] Discovery & tfvars Update → Gate: grep verification
 [Phase 2] Control Plane Upgrade     → Gate: phase_gate.py phase2 (exit code)
 [Phase 3] Add-on Safety Gate        → Gate: phase_gate.py phase3 (exit code)
@@ -76,7 +76,7 @@ WARN (exit code 2) is a soft-FAIL: the LLM MUST ask the user for approval before
 
 ## Phase 0: Pre-flight Validation
 
-Run the deterministic gate check script. The script validates 17 rules and returns an exit code.
+Run the deterministic gate check script. The script validates 18 rules and returns an exit code.
 
 ```bash
 python3 scripts/gate_check.py \
@@ -122,11 +122,12 @@ Do NOT generate an `upgrade-report-*-FAILED.md` file for Phase 0 failures — th
 
 **On exit code 2 (WARN):** Report HIGH/MEDIUM items inline and ask the user to confirm before proceeding.
 
-The script checks these 17 rules:
+The script checks these 18 rules:
 - COM-001: Cluster health (node Ready, resource pressure)
 - COM-002: Version compatibility (minor +1 constraint)
 - COM-002a: Kubelet version skew
 - COM-003: Add-on compatibility (status + TARGET_VERSION compatibility)
+- COM-004: EKS Insights UPGRADE_READINESS (removed API → CRITICAL, deprecated → WARN; live-cluster only, pair with pluto/kubent for pre-deploy manifests)
 - WLS-001: PDB blocking risk (disruptionsAllowed == 0)
 - WLS-002: Single replica risk (replicas == 1)
 - WLS-003: PV zone affinity (AZ node count cross-analysis)

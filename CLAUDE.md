@@ -75,7 +75,7 @@ k8s-upgrade-skills/          ← AI Agent가 읽는 스킬 디렉토리 (install
 ├── SKILL.md                 ← 루트 라우터: recipe 검증 + (environment, platform, iac) 기반 Sub-Skill 분기
 ├── scripts/
 │   ├── lib.py               ← 공통 헬퍼: GateResult, audit_flush, audit_append, kubectl_json, record, _parse_cpu/_parse_mem
-│   ├── gate_check.py        ← Phase 0: 17개 사전 검증 규칙 (COM/WLS/CAP/INF)
+│   ├── gate_check.py        ← Phase 0: 18개 사전 검증 규칙 (COM/WLS/CAP/INF)
 │   ├── phase_gate.py        ← Phase 2~7: 각 Phase Gate 함수 (phase2~phase7 서브커맨드)
 │   ├── drain_watch.py       ← 인라인 드레인 모니터 (백그라운드 폴링: 이벤트/PDB/NodeClaim → DRAIN-P*)
 │   ├── service_watch.py     ← 인라인 서비스 모니터 (EndpointSlice ready + HTTP health → SVC-P*)
@@ -123,11 +123,11 @@ validate_recipe.py            (stdlib only, 독립)
 
 ### gate_check.py 규칙 함수 구조
 
-17개 규칙은 카테고리별 함수로 구현되어 있다:
+18개 규칙은 카테고리별 함수로 구현되어 있다:
 
 | 카테고리 | 함수 | 규칙 ID |
 |---------|------|---------|
-| common | `check_com001` ~ `check_com003` | COM-001, COM-002, COM-002a, COM-003 |
+| common | `check_com001` ~ `check_com004` | COM-001, COM-002, COM-002a, COM-003, COM-004 |
 | workload-safety | `check_wls001` ~ `check_wls006` | WLS-001 ~ WLS-006 |
 | capacity | `check_cap001` ~ `check_cap003` | CAP-001 ~ CAP-003 |
 | infrastructure | `check_inf001` ~ `check_inf004` | INF-001 ~ INF-004 |

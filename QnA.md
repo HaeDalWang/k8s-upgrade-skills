@@ -100,6 +100,6 @@ Fargate 프로파일 정의(IaC) 자체는 변경하지 않습니다. 다만 Con
 
 ### Q: 업그레이드 대상 버전에서 사용 중인 API가 제거(Removed)되면 어떻게 되나요?
 
-Phase 0 사전 검증의 COM-002(버전 호환성) 규칙에서 EKS Insights의 `UPGRADE_READINESS` 카테고리를 조회하여 Deprecated/Removed API 사용 여부를 확인합니다. 감지된 경우 해당 리소스와 API 버전을 보고하고, CRITICAL로 판정하여 업그레이드를 차단합니다.
+Phase 0 사전 검증의 COM-004 규칙에서 EKS Insights의 `UPGRADE_READINESS` 카테고리를 조회하여 Deprecated/Removed API 사용 여부를 확인합니다. `ERROR`(제거된 API 등 차단 요인)는 CRITICAL로 판정하여 업그레이드를 차단하고, `WARNING`/`UNKNOWN`(deprecated 또는 미확정)은 HIGH로 판정하여 사용자 확인을 요구합니다. Insights 조회 자체가 실패하면(권한 등) 조용히 통과시키지 않고 HIGH로 보고합니다.
 
-다만 현재는 EKS Insights 또는 `kubectl` 기반 조회에 의존하며, 클러스터에 배포되지 않은 Helm chart나 CI/CD 파이프라인 내 매니페스트의 Deprecated API까지는 감지하지 못합니다. 배포 전 코드 레벨에서의 API 호환성 검사는 `pluto`, `kubent` 같은 별도 도구를 병행하는 것을 권장합니다.
+다만 EKS Insights는 **라이브 API 서버에 실제로 호출된 API만** 감지합니다. 클러스터에 아직 배포되지 않은 Helm chart나 CI/CD 파이프라인 내 매니페스트의 Deprecated API까지는 보지 못합니다. 배포 전 코드 레벨에서의 API 호환성 검사는 `pluto`, `kubent` 같은 별도 도구를 병행하는 것을 권장합니다.
