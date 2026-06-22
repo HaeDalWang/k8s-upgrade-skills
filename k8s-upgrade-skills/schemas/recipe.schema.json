@@ -13,6 +13,8 @@
     "target_version":    { "type": "string", "pattern": "^\\d+\\.\\d+$" },
     "output_language":   { "type": "string", "enum": ["ko", "en"] },
     "notes":             { "type": "string" },
+    "auth_prefix":       { "type": "string" },
+    "tf_var_file":       { "type": "string" },
     "services": {
       "type": "array",
       "items": {

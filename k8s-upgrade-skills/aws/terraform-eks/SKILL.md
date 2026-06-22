@@ -27,8 +27,18 @@ Recipe values are already validated by the root skill router. Read these values 
 | `TARGET_VERSION` | `target_version` | Upgrade target |
 | `TF_DIR` | (auto-discover) | Directory containing `terraform.tfvars` or `*.tf` files |
 | `EKS_MODULE` | (auto-discover) | Terraform module name for EKS (e.g. `module.eks`) |
+| `AUTH_PREFIX` | `auth_prefix` (optional) | Command prefix for terraform/aws (e.g. `aws-runas ezl-switch`). Empty if absent |
+| `TF_VAR_FILE` | `tf_var_file` (optional) | `-var-file`/`--var-file` for terraform (e.g. `ezl-dev.tfvars`). Empty if absent |
 
 > **Version constraint**: Only minor +1 upgrades are supported. 1.33 → 1.35 is rejected.
+
+### Authentication Rule (read before any command)
+
+If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` command with it** (e.g. `aws-runas ezl-switch terraform plan ...`). `kubectl` uses the active kubeconfig context.
+
+- **terraform** plans/applies: use `--var-file="${TF_VAR_FILE}"` when `tf_var_file` is set (workspace-specific tfvars).
+- **MFA sessions expire** (often 1h). A long Control Plane upgrade can outlast the session. Before starting, refresh the session once (e.g. `aws-runas ezl-switch aws sts get-caller-identity`); if a poll fails mid-upgrade with an auth error, re-authenticate and continue — the upgrade itself is unaffected.
+- The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. If your terraform auth differs (e.g. `aws-runas` vs `AWS_PROFILE`), `INF-001` may be unable to run `terraform plan` — that is now **info-only** (see Phase 0) and does not block the gate.
 
 ---
 
@@ -74,10 +84,15 @@ python3 scripts/gate_check.py \
   --current-version "${CURRENT_VERSION}" \
   --target-version "${TARGET_VERSION}" \
   --tf-dir "${TF_DIR}" \
+  --tf-var-file "${TF_VAR_FILE}" \
   --audit-log audit.log
 ```
 
+(Omit `--tf-var-file` if `tf_var_file` is not in the recipe.)
+
 Interpret the exit code per the convention table above.
+
+> **Re-running right after a previous upgrade (transient-state false BLOCK)**: If you start this upgrade immediately after a prior one finished, Karpenter may still be replacing nodes — `COM-001` (NotReady) or `WLS-001` (a controller PDB momentarily at `disruptionsAllowed=0`) can flip to CRITICAL and BLOCK. This is a transient state that self-resolves in a few minutes. If a CRITICAL appears AND `kubectl get nodes` / `kubectl get pdb -A` show the issue clearing, wait ~2–3 minutes and **re-run the gate once** before treating it as a real block. Do not bypass a CRITICAL that persists.
 
 **On exit code 1 (FAIL):** Output an inline remediation checklist — do NOT generate a report file. Format:
 
@@ -121,10 +136,10 @@ The script checks these 17 rules:
 - CAP-001: Node capacity headroom (CPU/MEM utilization)
 - CAP-002: Resource pressure pods (OOMKilled, CrashLoop, ImagePull, Evicted)
 - CAP-003: Surge capacity (subnet available IPs)
-- INF-001: Terraform state drift (requires --tf-dir)
+- INF-001: Terraform state drift (**info-only — never blocks the gate**; requires --tf-dir). May be unable to run under mismatched auth/var-file — that is expected and reported as INFO.
 - INF-002: AMI availability (SSM Parameter Store)
 - INF-003: Karpenter compatibility (conditional on CRD existence)
-- INF-004: Terraform recreate detection (requires --tf-dir)
+- INF-004: Terraform recreate detection (requires --tf-dir; SKIPPED if INF-001's plan could not run)
 
 Audit log (`audit.log`) is written by the script in **append mode** — each phase appends its records without overwriting previous phases. The LLM reads it but does not write to it directly — use `scripts/audit_event.py` to append LLM-side events.
 
@@ -201,19 +216,23 @@ Review the plan output:
 > **If `aws_eks_node_group` appears in the plan (version change):** MNG rolling will start alongside CP upgrade.
 > You MUST launch the drain monitor sub-agent (step 2-2) BEFORE running terraform apply.
 
-### 2-2. Launch Sub-Agent Drain Monitor
+### 2-2. Start Drain Monitor (inline background)
 
-> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE proceeding to step 2-3.
-> Do NOT run `terraform apply` until the drain monitor is active.
+> ⛔ **HARD GATE**: Start the drain monitor and confirm it is running BEFORE proceeding to step 2-3.
+> Do NOT run `terraform apply` until the monitor is active.
 > This applies even if `aws_eks_node_group` does NOT appear in the plan — CP upgrade can still cause transient node events.
+>
+> **Why inline, not a sub-agent**: Claude Code agents are synchronous call-return — a sub-agent cannot stream a "STOP now" signal mid-watch, and its Bash runs under a separate permission boundary. The monitor therefore runs as a deterministic polling script that the **main agent** launches in the background. Rationale: `agents/k8s-drain-monitor.md`.
 
-Launch the `k8s-drain-monitor` agent with these parameters:
-- `PHASE`: `P2`
-- `AUDIT_LOG`: absolute path to `audit.log`
-- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+Launch the monitor with **`run_in_background: true`** (prefix with the recipe `auth_prefix`/kube context if defined):
 
-The agent will watch kube-system Warning events and record `DRAIN-P2` entries to audit.log.
-Signal the agent to terminate after Phase 2 gate passes.
+```bash
+python3 scripts/drain_watch.py --phase P2 --scope kube-system --audit-log audit.log
+```
+
+It polls kube-system Warning events every 30s and appends `DRAIN-P2` entries to audit.log (fcntl-locked — safe alongside gate scripts). While the apply runs, check its output periodically with BashOutput. A `FAIL`-severity line (e.g. `FailedDrain`) means **STOP and investigate**.
+
+**Terminate after the Phase 2 gate passes**: kill the background shell (KillShell), or pass `--stop-file <path>` at launch and `touch` that path to stop it cleanly.
 
 ### 2-3. Targeted Apply
 
@@ -224,6 +243,18 @@ cd "${TF_DIR}" && terraform apply -target=${EKS_MODULE} -auto-approve 2>&1
 ```
 
 This typically takes 8–40 minutes for the Control Plane. The MNG rolling update may also be triggered if it was already pending — monitor below.
+
+### 2-3-a. Handling 409 ResourceInUseException (expected, not a failure)
+
+`terraform apply` may exit with `409 ResourceInUseException: Cannot VersionUpdate because cluster ... has update ... in progress`. **This is NOT a failure.** EKS already accepted the version update and began it before terraform's call returned. Do not treat it as an abort. Recover by polling:
+
+1. `${AUTH_PREFIX} aws eks describe-cluster --name "${CLUSTER_NAME}" --query 'cluster.status' --output text` → if `UPDATING`, the upgrade is proceeding normally.
+2. Do **not** re-run apply while the cluster is `UPDATING` (it will 409 again). Poll (step 2-4) until `ACTIVE` + `TARGET_VERSION`.
+3. Once `ACTIVE` at the target version, run apply **once more** to sync terraform state (add-ons, `time_sleep`):
+   ```bash
+   cd "${TF_DIR}" && ${AUTH_PREFIX} terraform apply -target=${EKS_MODULE} --var-file="${TF_VAR_FILE}" -auto-approve 2>&1
+   ```
+   Then proceed to the Phase 2 gate.
 
 ### 2-3-b. Terraform Apply Timeout Handling
 
@@ -304,6 +335,14 @@ python3 scripts/phase_gate.py phase3 \
 
 Interpret exit code per convention table. On PASS, proceed to Phase 4.
 
+**On WARN (exit code 2) — add-ons still `UPDATING`**: After a Control Plane upgrade, add-ons reconcile **sequentially** (commonly vpc-cni → coredns → kube-proxy), so the gate can report `UPDATING` two or three times in a row. This is normal. Do NOT treat it as a failure and do not require the user to re-run manually:
+
+1. Wait 30 seconds, then re-run the Phase 3 gate.
+2. Repeat up to ~6 times (≈3 minutes total) until all add-ons are `ACTIVE` (exit 0).
+3. Only if an add-on reaches a terminal bad state (`DEGRADED`/`*_FAILED`, reported as FAIL/exit 1) do you STOP.
+
+New Fargate pods may show `Pending` transiently while a fresh Fargate node provisions (the `aws-logging configmap not found` warning is normal when Fargate logging is not configured). These clear once the add-on is `ACTIVE`.
+
 ---
 
 ## Phase 4: Data Plane (Managed Node Group) Rolling Update
@@ -312,35 +351,43 @@ Phase 4 has two parts:
 1. **4-A**: Update AMI alias in tfvars and apply MNG rolling update via Terraform
 2. **4-B**: Monitor rollout and verify via gate script
 
-### 4-0. Launch Sub-Agent Drain Monitor
+### 4-0. Start Drain Monitor (inline background)
 
-> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE any Phase 4 action.
-> **If MNG is already in `UPDATING` state** (triggered by Phase 2 apply): launch the agent IMMEDIATELY upon entering Phase 4 — do not wait for AMI update steps.
-> Do NOT proceed with AMI alias updates or terraform apply until the drain monitor is active.
+> ⛔ **HARD GATE**: Start the drain monitor and confirm it is running BEFORE any Phase 4 action.
+> **If MNG is already in `UPDATING` state** (triggered by Phase 2 apply): start it IMMEDIATELY upon entering Phase 4 — do not wait for AMI update steps.
+> Do NOT proceed with AMI alias updates or terraform apply until the monitor is active.
+>
+> **Why inline, not a sub-agent**: see step 2-2 and `agents/k8s-drain-monitor.md`. The main agent runs the monitor as a background polling script.
 
-Launch the `k8s-drain-monitor` agent with these parameters:
-- `PHASE`: `P4`
-- `AUDIT_LOG`: absolute path to `audit.log`
-- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+Launch the monitor with **`run_in_background: true`**:
 
-The agent watches all-namespace Warning events, polls PDB status every 30s, and records `DRAIN-P4` entries to audit.log.
-Signal the agent to terminate after Phase 4 gate passes.
+```bash
+python3 scripts/drain_watch.py --phase P4 --scope all --audit-log audit.log
+```
 
-### 4-0b. Launch Service-Aware Sub-Agent (if services defined)
+It polls all-namespace Warning events AND PDB `disruptionsAllowed=0` (drain blocked) every 30s, recording `DRAIN-P4` entries to audit.log. During the MNG rolling apply, check its output with BashOutput. A `FAIL` line means **STOP**; a `DisruptionBlocked(PDB)` WARN means a PDB is blocking eviction — investigate before forcing progress.
+
+**Terminate after the Phase 4 gate passes**: KillShell, or use `--stop-file`.
+
+### 4-0b. Start Service-Aware Monitor (inline background, if services defined)
 
 **Skip this step if `services` field is absent in recipe.md/recipe.yaml.**
 
-> ⛔ **HARD GATE**: If `services` is defined, launch the `k8s-service-aware` agent and confirm it is running BEFORE any Phase 4 action.
-> Do NOT proceed until both drain monitor and service-aware agents are active.
+> ⛔ **HARD GATE**: If `services` is defined, start the service monitor and confirm it is running BEFORE any Phase 4 action.
+> Do NOT proceed until both the drain monitor and service monitor are active.
+>
+> **Why inline, not a sub-agent**: same reasons as the drain monitor — see `agents/k8s-service-aware.md`.
 
-Launch the `k8s-service-aware` agent with these parameters:
-- `PHASE`: `P4`
-- `AUDIT_LOG`: absolute path to `audit.log`
-- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
-- `SERVICES`: JSON array from recipe `services` field
+Serialize the recipe `services` field to a JSON array and launch with **`run_in_background: true`**:
 
-The agent polls EndpointSlice ready counts and HTTP health checks every 30s, records `SVC-P4` entries to audit.log.
-Signal the agent to terminate after Phase 4 gate passes.
+```bash
+python3 scripts/service_watch.py --phase P4 --audit-log audit.log \
+  --services-json '<SERVICES_JSON>'
+```
+
+It polls each service's EndpointSlice ready count (vs `min_endpoints`) and HTTP `health_check_url` every 30s, recording `SVC-P4` entries to audit.log. A service without `health_check_url` is monitored EndpointSlice-only (BestEffort, logged once). Check output with BashOutput during the rolling update; a sustained `ready_endpoints < min` or health failure means a real-traffic impact — **STOP and investigate**.
+
+**Terminate after the Phase 4 gate passes**: KillShell, or use `--stop-file`.
 
 ### 4-1. Detect Current amiType (Architecture Preservation)
 
@@ -467,34 +514,40 @@ On PASS, proceed to Phase 5.
 
 ## Phase 5: Karpenter Nodes (If Applicable)
 
-### 5-0. Launch Sub-Agent Drain Monitor
+### 5-0. Start Drain Monitor (inline background)
 
-> ⛔ **HARD GATE**: Launch the `k8s-drain-monitor` agent and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
+> ⛔ **HARD GATE**: Start the drain monitor and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
 > AMI alias update triggers Karpenter drift detection and automatic node replacement immediately.
-> Do NOT modify tfvars until the drain monitor is active.
+> Do NOT modify tfvars until the monitor is active.
+>
+> **Why inline, not a sub-agent**: see step 2-2 and `agents/k8s-drain-monitor.md`.
 
-Launch the `k8s-drain-monitor` agent with these parameters:
-- `PHASE`: `P5`
-- `AUDIT_LOG`: absolute path to `audit.log`
-- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
+Launch the monitor with **`run_in_background: true`**:
 
-The agent watches all-namespace Warning events, watches NodeClaim status, and records `DRAIN-P5` entries to audit.log.
-Signal the agent to terminate after Phase 5 gate passes.
+```bash
+python3 scripts/drain_watch.py --phase P5 --scope all --audit-log audit.log
+```
 
-### 5-0b. Launch Service-Aware Sub-Agent (if services defined)
+It polls all-namespace Warning events, PDB status, AND NodeClaim Ready conditions every 30s, recording `DRAIN-P5` entries to audit.log. While Karpenter replaces drifted nodes, check its output with BashOutput. `NodeClaimNotReady` WARNs are expected transiently; a sustained one or any `FAIL` means **STOP**.
+
+**Terminate after the Phase 5 gate passes**: KillShell, or use `--stop-file`.
+
+### 5-0b. Start Service-Aware Monitor (inline background, if services defined)
 
 **Skip this step if `services` field is absent in recipe.md/recipe.yaml.**
 
-> ⛔ **HARD GATE**: If `services` is defined, launch the `k8s-service-aware` agent and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
+> ⛔ **HARD GATE**: If `services` is defined, start the service monitor and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
+>
+> **Why inline, not a sub-agent**: see `agents/k8s-service-aware.md`.
 
-Launch the `k8s-service-aware` agent with these parameters:
-- `PHASE`: `P5`
-- `AUDIT_LOG`: absolute path to `audit.log`
-- `SKILL_SCRIPTS_DIR`: absolute path to the `scripts/` directory
-- `SERVICES`: JSON array from recipe `services` field
+Serialize the recipe `services` field to JSON and launch with **`run_in_background: true`**:
 
-The agent records `SVC-P5` entries to audit.log.
-Signal the agent to terminate after Phase 5 gate passes.
+```bash
+python3 scripts/service_watch.py --phase P5 --audit-log audit.log \
+  --services-json '<SERVICES_JSON>'
+```
+
+It records `SVC-P5` entries to audit.log. **Terminate after the Phase 5 gate passes**: KillShell, or use `--stop-file`.
 
 ### 5-1. Monitor Karpenter Node Replacement
 
@@ -549,6 +602,33 @@ Interpret exit code per convention table. The script uses `terraform show -json`
 ---
 
 ## Phase 7: Final Validation
+
+### 7-0. Refresh Fargate Profile Workloads (pre-validation)
+
+> ⚠️ **Do this BEFORE the Phase 7 gate.** EKS **Fargate** nodes do NOT update their kubelet until their pods restart. After a Control Plane upgrade, Fargate nodes linger on the OLD version and will FAIL the Phase 7 node-version check (this caused a Phase 7 FAIL in production). The gate cannot fix this — you must refresh the pods.
+
+**Skip if the cluster has no Fargate profiles** (`aws eks list-fargate-profiles --cluster-name "${CLUSTER_NAME}"` returns empty).
+
+1. Detect lingering Fargate nodes below the target version:
+   ```bash
+   kubectl get nodes -o wide | grep fargate
+   ```
+   Any `fargate-*` node not at `v${TARGET_VERSION}.x` must be refreshed.
+
+2. Find which Deployments run on those nodes:
+   ```bash
+   kubectl get pods -A -o wide | grep <fargate-node-name>
+   ```
+
+3. `rollout restart` each owning Deployment so its pods reschedule onto fresh Fargate nodes (new kubelet):
+   ```bash
+   kubectl rollout restart deployment/<name> -n <namespace>
+   ```
+   The usual culprits are `deployment/coredns -n kube-system` and `deployment/karpenter -n karpenter`.
+
+4. Wait for the new Fargate nodes to be `Ready` at `v${TARGET_VERSION}.x`, then run the Phase 7 gate.
+
+> **Learned in production**: restarting `coredns` + `karpenter` together up front makes the Phase 7 gate pass on the first try, instead of failing on lingering Fargate nodes and retrying.
 
 ### 7-1. Gate Verification
 
