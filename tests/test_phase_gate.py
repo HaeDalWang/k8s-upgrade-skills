@@ -2893,6 +2893,36 @@ class TestAuditLogAppend:
         # 두 섹션 모두 존재
         assert content.count("# Gate:") == 2
 
+    def test_audit_init_empty_current_version_no_dirty_header(self, tmp_path):
+        """phase_gate처럼 current_ver=''를 넘겨도 '# Upgrade:  → X' 오염이 없어야 함."""
+        import importlib
+        import lib
+        importlib.reload(lib)
+        audit_path = str(tmp_path / "audit.log")
+        lib.reset_gate()
+        lib.audit_init("ezl-dev", "", "1.34")
+        lib.audit_write("PHASE2-CP", "PASS", "ok")
+        lib.audit_flush(audit_path)
+        content = open(audit_path, encoding="utf-8").read()
+        assert "Upgrade:  →" not in content, "빈 current_version으로 헤더가 오염됨"
+        assert "# Target version: 1.34" in content
+        assert "# Cluster: ezl-dev" in content
+
+    def test_audit_init_all_empty_graceful(self, tmp_path):
+        """phase3/6처럼 cluster/version 모두 빈 경우에도 헤더가 깨지지 않아야 함."""
+        import importlib
+        import lib
+        importlib.reload(lib)
+        audit_path = str(tmp_path / "audit.log")
+        lib.reset_gate()
+        lib.audit_init("", "", "")
+        lib.audit_write("PHASE6-TFSYNC", "PASS", "ok")
+        lib.audit_flush(audit_path)
+        content = open(audit_path, encoding="utf-8").read()
+        assert "Upgrade:  →" not in content
+        assert "Cluster: (n/a" in content
+        assert "Version: (n/a" in content
+
 
 # ══════════════════════════════════════════════════════════════
 # Bug fix 검증: resource_changes no-op 필터

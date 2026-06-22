@@ -9,10 +9,12 @@ target_version: "1.35"    # 따옴표 필수. current_version의 차기 마이�
 
 # ── 선택 필드 ──────────────────────────────────────────────
 output_language: ko       # ko | en (기본: ko) — 계획서·보고서 출력 언어
+# auth_prefix: "aws-runas ezl-switch"   # terraform/aws 명령 프리픽스 (MFA assume-role 등). 없으면 생략
+# tf_var_file: "ezl-dev.tfvars"         # terraform var-file (workspace별 tfvars). 없으면 생략
 
 # ── 서비스 가용성 모니터링 (선택) ──────────────────────────
-# 없으면 Service-Aware Sub-Agent가 투입되지 않습니다.
-# 노드 교체 중 서비스 엔드포인트 수와 HTTP 헬스체크를 실시간 감시합니다.
+# 없으면 인라인 서비스 모니터(service_watch.py)가 투입되지 않습니다.
+# 노드 교체 중 서비스 엔드포인트 수와 HTTP 헬스체크를 백그라운드 폴링으로 감시합니다.
 #
 # min_endpoints: 정상으로 간주할 최소 ready 엔드포인트 수
 # health_check_url: 외부에서 접근 가능한 헬스체크 URL (없으면 EndpointSlice만 확인)

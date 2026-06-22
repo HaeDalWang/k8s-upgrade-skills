@@ -882,14 +882,13 @@ class TestInf001Property:
     @settings(max_examples=100)
     def test_inf001_exit_code_interpretation(self, exit_code, output_type):
         """
-        For any combination of terraform plan exit code (0/1/2) and plan output
-        (destroy pattern / recreate markers / non-destructive):
-        - exit 0 → PASS (no changes)
-        - exit 1 → FAIL(HIGH) (terraform plan error)
-        - exit 2 + destroy/recreate pattern → FAIL(HIGH) "destroy/recreate 포함"
-        - exit 2 + non-destructive only → FAIL(HIGH) "비파괴적 변경"
+        INF-001은 정보성으로 격하되어 게이트(critical_fail/high_warn)를 막지 않는다:
+        - exit 0 → PASS (no drift)
+        - exit 1 → INFO (medium_info) "plan 실행 불가"
+        - exit 2 + destroy/recreate pattern → INFO (medium_info) "destroy/recreate 포함"
+        - exit 2 + non-destructive only → INFO (medium_info) "비파괴적 변경"
 
-        **Validates: Requirements 5.3, 5.4, 5.5, 5.6**
+        어떤 경우에도 high_warn / critical_fail은 0이어야 한다.
         """
         # Reset counters
         gate_check.reset_gate()
@@ -901,27 +900,27 @@ class TestInf001Property:
 
         assert gate_check.total_rules == 1, "check_inf001 should record exactly one result"
 
+        # INF-001은 정보성 — 어떤 경우에도 게이트를 막지 않는다
+        assert gate_check.high_warn == 0, (
+            f"INF-001 must not raise HIGH warn (info-only), got {gate_check.high_warn}"
+        )
+        assert gate_check.critical_fail == 0
+
         if exit_code == 0:
-            # Req 5.3: exit 0 → PASS
+            # exit 0 → PASS (no drift)
             assert gate_check.total_pass == 1, (
                 f"Expected PASS for exit_code=0, got pass={gate_check.total_pass}"
             )
-            assert gate_check.high_warn == 0
-            assert gate_check.critical_fail == 0
-        elif exit_code == 1:
-            # Req 5.6: exit 1 → FAIL(HIGH)
-            assert gate_check.high_warn == 1, (
-                f"Expected FAIL(HIGH) for exit_code=1, got high_warn={gate_check.high_warn}"
+            assert gate_check.medium_info == 0
+        else:
+            # exit 1/2 → INFO (medium_info), not a pass
+            assert gate_check.medium_info == 1, (
+                f"Expected INFO(medium_info) for exit_code={exit_code}, "
+                f"got medium_info={gate_check.medium_info}"
             )
             assert gate_check.total_pass == 0
-            assert gate_check.critical_fail == 0
-        elif exit_code == 2:
-            # Req 5.4, 5.5: exit 2 → always FAIL(HIGH)
-            assert gate_check.high_warn == 1, (
-                f"Expected FAIL(HIGH) for exit_code=2, got high_warn={gate_check.high_warn}"
-            )
-            assert gate_check.total_pass == 0
-            assert gate_check.critical_fail == 0
+
+        if exit_code == 2:
 
             # Verify audit message distinguishes destroy vs non-destructive
             audit_text = " ".join(gate_check.audit_lines)

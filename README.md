@@ -36,8 +36,9 @@ EKS 업그레이드처럼 **고위험·다단계·장기 체공** 작업은 운�
 - IaC 변경 사전 검토 후 적용 (예상치 못한 리소스 삭제 시 즉시 중단)
 - `recipe.md` 기반 플랫폼/IaC 자동 라우팅 — 환경에 맞는 Sub-Skill 자동 선택
 - recipe 스키마 검증 (`scripts/validate_recipe.py`) — 파싱 실패를 사전 차단
-- **병렬 Sub-Agent 드레인 모니터**: terraform apply 실행과 동시에 Sub-Agent가 `kubectl get events`로 드레인 이벤트 실시간 감시. 감지 이벤트는 `audit_event.py`를 통해 audit.log에 기록
-- **Service-Aware Sub-Agent**: 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 실시간 감시 (BestEffort)
+- **인라인 드레인 모니터** (`scripts/drain_watch.py`): terraform apply와 동시에 메인 에이전트가 백그라운드로 실행. Warning 이벤트 / PDB 차단 / NodeClaim 상태를 30초 주기로 폴링해 드레인 위험을 `DRAIN-P*`로 audit.log에 기록
+- **인라인 서비스 모니터** (`scripts/service_watch.py`): 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 감시 (BestEffort). `recipe`에 `services`가 있을 때만 투입
+  - > 별도 Sub-Agent가 아닌 **메인 에이전트의 백그라운드 폴링**으로 동작합니다. Claude Code 에이전트는 동기 호출-반환 모델이라 "감시 중 즉시 STOP 신호"를 보낼 수 없어, 결정적 폴링 스크립트로 구현했습니다. (근거: `agents/k8s-drain-monitor.md`)
 
 ## 해당 스킬이 하지 않는 것
 
@@ -49,7 +50,8 @@ EKS 업그레이드처럼 **고위험·다단계·장기 체공** 작업은 운�
 - Zero-downtime 보장 — 위험 요소를 사전 감지하지만, 무중단을 검증하거나 보장하지 않음
 - 마이너 버전 2단계 이상 건너뛰기 (예: 1.33 → 1.35 불가, 한 단계씩만)
 - 워크로드 Spec 직접 수정 (PDB, replica 수, 노드 프로비저닝 등)
-- Self-managed Node Group / Fargate 프로파일 업그레이드
+- Self-managed Node Group 업그레이드 (Managed Node Group · Karpenter는 지원)
+  - Fargate 프로파일 정의(IaC) 변경은 하지 않지만, CP 업그레이드 후 Fargate 노드 kubelet 갱신을 위한 Pod `rollout restart`는 Phase 7-0에서 수행합니다
 - 현재 지원하지 않는 플랫폼/IaC 조합 (개발 현황 참조)
 
 ## 로드맵
@@ -124,8 +126,10 @@ target_version: "1.35"    # 목표 버전 (따옴표 필수) — 반드시 curre
 
 # 선택 항목
 output_language: ko       # ko | en
+auth_prefix: ""           # terraform/aws 명령 프리픽스 (예: "aws-runas ezl-switch"). MFA assume-role 등
+tf_var_file: ""           # terraform var-file (예: "ezl-dev.tfvars"). workspace별 tfvars 사용 시
 
-# 서비스 가용성 모니터링 (선택) — 없으면 Service-Aware Sub-Agent SKIP
+# 서비스 가용성 모니터링 (선택) — 없으면 인라인 service_watch SKIP
 services:
   - name: my-api
     namespace: production
@@ -144,7 +148,7 @@ services:
 
 > **Service-Aware Gate 한계 안내**
 >
-> `services` 필드는 노드 교체 중 서비스 가용성을 실시간으로 감시하는 Sub-Agent를 투입합니다.
+> `services` 필드는 노드 교체 중 서비스 가용성을 감시하는 인라인 모니터(`service_watch.py`)를 투입합니다.
 >
 > | 설정 | 감시 방식 | 보장 수준 |
 > |------|---------|---------|
@@ -196,7 +200,7 @@ services:
 ```
 
 > `kubectl patch/scale/delete`는 Phase 0 CRITICAL 해소 조치(PDB 수정, padding Pod 삭제 등)에 사용됩니다. 읽기 전용 사전 검증만 원한다면 해당 항목을 제외하세요.
-> `jq`, `curl`은 Phase 2 타임아웃 감지(MNG 상태 확인) 및 Service-Aware Sub-Agent(헬스체크)에 사용됩니다.
+> `jq`, `curl`은 Phase 2 타임아웃 감지(MNG 상태 확인) 및 인라인 서비스 모니터(`service_watch.py` 헬스체크)에 사용됩니다.
 
 ## 업그레이드 워크플로우
 
@@ -208,10 +212,10 @@ graph TD
     B0 -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
     USER_CONFIRM -- "승인" --> C
     USER_CONFIRM -- "거부" --> STOP
-    C -- "Gate: 버전/AMI 값 반영 확인" --> D["Phase 2: Control Plane 업그레이드\n+ Sub-Agent: kube-system 이벤트 감시"]
+    C -- "Gate: 버전/AMI 값 반영 확인" --> D["Phase 2: Control Plane 업그레이드\n+ 인라인 모니터: kube-system 이벤트 감시"]
     D -- "Gate: CP status=ACTIVE, 목표 버전 도달" --> E[Phase 3: Add-on 검증]
-    E -- "Gate: 모든 Add-on ACTIVE" --> F["Phase 4: Data Plane 업그레이드\n+ Sub-Agent: 드레인 이벤트 + 서비스 가용성 감시"]
-    F -- "Gate: 전체 노드 Ready, 목표 버전" --> G["Phase 5: 오토스케일러 노드 교체\n+ Sub-Agent: 드레인 이벤트 + 서비스 가용성 감시"]
+    E -- "Gate: 모든 Add-on ACTIVE" --> F["Phase 4: Data Plane 업그레이드\n+ 인라인 모니터: 드레인 이벤트 + 서비스 가용성"]
+    F -- "Gate: 전체 노드 Ready, 목표 버전" --> G["Phase 5: 오토스케일러 노드 교체\n+ 인라인 모니터: 드레인 이벤트 + 서비스 가용성"]
     G -- "Gate: Drift 교체 완료, 전 노드 Ready" --> H[Phase 6: IaC 전체 동기화]
     H -- "Gate: plan에 예상치 못한 변경 없음" --> I[Phase 7: 최종 검증 및 보고서]
     I -- "Gate: unhealthy Pod 0개" --> J[완료]
@@ -244,15 +248,20 @@ graph TD
 │   │   ├── gate_check.py               #     Phase 0 독립 검증 (exit code로 Gate 제어)
 │   │   ├── phase_gate.py               #     Phase 2~7 Gate 검증 (exit code로 Gate 제어)
 │   │   ├── validate_recipe.py          #     recipe.yaml 스키마 검증 (services 필드 포함)
-│   │   └── audit_event.py              #     Sub-Agent용 단일 이벤트 audit.log 기록 CLI
+│   │   ├── drain_watch.py              #     인라인 드레인 모니터 (백그라운드 폴링, DRAIN-P*)
+│   │   ├── service_watch.py            #     인라인 서비스 모니터 (EndpointSlice+HTTP, SVC-P*)
+│   │   └── audit_event.py              #     단일 이벤트 audit.log 기록 CLI (lib.audit_append 래퍼)
+│   ├── agents/
+│   │   ├── k8s-drain-monitor.md        #     드레인 모니터 — 인라인 전환 근거(rationale) 문서
+│   │   └── k8s-service-aware.md        #     서비스 모니터 — 인라인 전환 근거(rationale) 문서
 │   ├── schemas/
 │   │   └── recipe.schema.json          #     recipe.yaml IDE 스키마 (VSCode/Kiro)
 │   └── aws/terraform-eks/
-│       ├── SKILL.md                    #     Phase 0~7 실행 절차 + Sub-Agent 투입 지시
+│       ├── SKILL.md                    #     Phase 0~7 실행 절차 + 인라인 모니터 실행 지시
 │       └── reference.md               #     보고서 템플릿, 중단 조건
 ├── docs/
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
-│   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (Sub-Agent 보고 해석 포함)
+│   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (모니터 이벤트 해석 포함)
 ├── example/terraform-eks/              # EKS + Karpenter 참조 Terraform 코드
 │   ├── recipe.md                      #   업그레이드 요구사항 예제 (services 필드 포함)
 │   └── terraform/                     #   eks.tf, network.tf, yamls/ 등
@@ -260,6 +269,8 @@ graph TD
 │   ├── test_gate_check.py             #   gate_check.py 단위 테스트
 │   ├── test_phase_gate.py             #   phase_gate.py 단위 테스트
 │   ├── test_audit_event.py            #   audit_event.py 단위 테스트
+│   ├── test_drain_watch.py            #   drain_watch.py 단위 테스트
+│   ├── test_service_watch.py          #   service_watch.py 단위 테스트
 │   └── test_validate_recipe.py        #   validate_recipe.py 단위 테스트 (services 포함)
 ├─ install.sh                          # 전역 설치 스크립트
 └── README.md

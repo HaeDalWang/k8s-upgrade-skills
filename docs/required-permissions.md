@@ -179,7 +179,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["delete"]
-  # EndpointSlice 감시 (Service-Aware Sub-Agent)
+  # EndpointSlice 감시 (인라인 서비스 모니터 service_watch.py)
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
