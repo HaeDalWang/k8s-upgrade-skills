@@ -1,0 +1,40 @@
+{
+  "chart_name": "ingress-nginx",
+  "repo": "https://kubernetes.github.io/ingress-nginx",
+  "compat_source": "https://github.com/kubernetes/ingress-nginx#supported-versions",
+  "chart_to_app": "same",
+  "has_crds": false,
+
+  "support": {
+    "type": "window",
+    "note": "supported = 해당 K8s 버전에서 E2E 테스트 통과. chart 버전 = controller 버전 (4.15.1 → v1.15.1).",
+    "matrix": [
+      { "chart_range": "4.13.x", "k8s_min": "1.29", "k8s_max": "1.33" },
+      { "chart_range": "4.14.x", "k8s_min": "1.30", "k8s_max": "1.34" },
+      { "chart_range": "4.15.x", "k8s_min": "1.31", "k8s_max": "1.35" }
+    ]
+  },
+
+  "lifecycle": {
+    "type": "whole_retired",
+    "eol_date": "2026-03",
+    "detail": "2026-03 best-effort 유지보수 종료, 2026-03-24 repo 아카이브(read-only). 이후 보안 패치 없음. 마지막 릴리스 chart 4.15.1 / controller v1.15.1.",
+    "migration": "Gateway API 구현체로 이전 (공식 후속 프로젝트 미지정)",
+    "announcement": "https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/",
+    "severity": "HIGH"
+  },
+
+  "upgrade_hazards": [],
+
+  "k8s_breaks": {
+    "1.22": {
+      "change": "networking.k8s.io/v1beta1 Ingress 제거 — 구버전 차트의 Ingress 매니페스트가 깨짐",
+      "requires": "chart >= 4.0.0",
+      "severity": "CRITICAL"
+    },
+    "1.25": {
+      "change": "PodSecurityPolicy 제거 — PSP를 생성하는 구버전 차트는 설치 실패",
+      "severity": "HIGH"
+    }
+  }
+}
