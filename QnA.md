@@ -103,3 +103,30 @@ Fargate 프로파일 정의(IaC) 자체는 변경하지 않습니다. 다만 Con
 Phase 0 사전 검증의 COM-004 규칙에서 EKS Insights의 `UPGRADE_READINESS` 카테고리를 조회하여 Deprecated/Removed API 사용 여부를 확인합니다. `ERROR`(제거된 API 등 차단 요인)는 CRITICAL로 판정하여 업그레이드를 차단하고, `WARNING`/`UNKNOWN`(deprecated 또는 미확정)은 HIGH로 판정하여 사용자 확인을 요구합니다. Insights 조회 자체가 실패하면(권한 등) 조용히 통과시키지 않고 HIGH로 보고합니다.
 
 다만 EKS Insights는 **라이브 API 서버에 실제로 호출된 API만** 감지합니다. 클러스터에 아직 배포되지 않은 Helm chart나 CI/CD 파이프라인 내 매니페스트의 Deprecated API까지는 보지 못합니다. 배포 전 코드 레벨에서의 API 호환성 검사는 `pluto`, `kubent` 같은 별도 도구를 병행하는 것을 권장합니다.
+
+---
+
+## Helm 차트 호환성
+
+### Q: 설치된 Helm 차트가 대상 K8s 버전을 지원하는지 미리 알 수 있나요?
+
+`helm-k8s-compat` 스킬(install.sh로 함께 설치됨)이 이 역할을 합니다. `helm ls`로 설치된 Release를 수집한 뒤, De-facto 표준 차트를 큐레이션한 registry와 대조하여 업그레이드 전에 호환성 문제를 검출합니다. "Helm 차트 호환성 점검해줘"로 단독 실행하거나, 업그레이드 Phase 0 보조로 사용할 수 있습니다.
+
+검출하는 항목:
+
+- **지원 버전 윈도우 초과** — 예: ingress-nginx 4.13.x는 K8s 1.33이 상한입니다. 1.34로 올리려면 차트를 4.14.x 이상으로 먼저 올려야 하는데, `kubeVersion` 필드(`>=1.21`)만 보면 이 문제를 놓칩니다.
+- **retirement / EOL** — ingress-nginx는 2026-03 retirement되어 보안 패치가 없습니다. cert-manager는 release당 ~4개월 지원이라 EOL 날짜가 지난 버전을 쓰고 있을 수 있습니다.
+- **minor 강결합** — cluster-autoscaler는 app minor가 K8s minor와 1:1로 일치해야 합니다.
+- **수동 업그레이드 함정** — Helm v3는 CRD를 자동 업데이트하지 않습니다. aws-load-balancer-controller·kube-prometheus-stack처럼 CRD를 가진 차트는 `kubectl apply`로 CRD를 수동 갱신해야 하며, 버전 점프에 따라 IAM 정책·webhook 전환이 필요할 수 있습니다.
+
+판정은 `helm_compat_check.py`의 exit code로 결정됩니다(0=문제없음, 1=차단, 2=확인 필요, 127=helm 미존재). 기존 gate_check.py와 동일하게 LLM이 우회할 수 없습니다.
+
+### Q: 모든 Helm 차트를 검사하나요?
+
+아닙니다. registry는 EKS 환경에서 사실상 표준으로 쓰이는 차트를 **깊게** 큐레이션한 것으로, 모든 차트를 망라하지 않습니다. registry에 없는 차트는 `kubeVersion` 필드 기반 best-effort 평가 + "수동 검토 필요"로 보고하며, 조용히 통과시키지 않습니다(false 안심 방지).
+
+이는 의도적인 선택입니다. 실전 차트는 호환성 정보가 부실하거나 모델이 제각각이라(어떤 건 윈도우, 어떤 건 minor 강결합, 어떤 건 매트릭스 자체가 없음), 표준 차트를 정확히 다루는 것이 얕고 넓은 자동 추측보다 신뢰할 수 있습니다. 새 차트는 `registry/_schema.md`의 체크리스트를 따라 추가할 수 있습니다.
+
+### Q: EKS Insights·kubent와 무엇이 다른가요?
+
+상호 보완 관계입니다. EKS Insights와 kubent는 **라이브 API 서버에 실제로 호출된 API**를 스캔합니다(제거/Deprecated API 객체 감지). 반면 `helm-k8s-compat`는 **차트 자체의 호환성**을 봅니다 — 차트 버전이 대상 K8s를 지원하는지, 컨트롤러가 retirement되지 않았는지, 차트를 올릴 때 어떤 수동 단계가 필요한지. 이는 API 스캔으로는 나오지 않고 릴리스 노트·지원 매트릭스에만 있는 지식입니다. 두 부류를 함께 쓰는 것을 권장합니다.
