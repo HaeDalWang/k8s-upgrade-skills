@@ -1,0 +1,28 @@
+{
+  "chart_name": "kube-prometheus-stack",
+  "repo": "https://prometheus-community.github.io/helm-charts",
+  "compat_source": "https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack",
+  "chart_to_app": "same",
+  "has_crds": true,
+  "note": "chart appVersion = Prometheus Operator 버전(매칭 CRD 포함). 머신리더블 K8s 매트릭스 없음(Chart.yaml은 'Kubernetes 1.19+'만). CRD가 매우 크고 많음 — major 버전 bump = breaking change(수동 조치 필요)를 의미. 버전별 상세는 UPGRADE.md 참조.",
+
+  "support": {
+    "type": "unknown",
+    "note": "차트 README에 K8s 1.33/1.34/1.35 명시 없음. 최소 Kubernetes 1.19+, Helm 3+. 차트 버전별 정확한 K8s 지원은 Chart.yaml/릴리스 노트 직접 확인."
+  },
+
+  "lifecycle": {
+    "type": "none"
+  },
+
+  "upgrade_hazards": [
+    {
+      "trigger": "major 버전 bump",
+      "type": "CRD",
+      "action": "Helm v3는 이 차트의 CRD를 자동 업데이트하지 않음 — kubectl apply로 monitoring.coreos.com CRD를 수동 갱신해야 함. major bump는 수동 조치가 필요한 breaking change를 의미하므로 UPGRADE.md의 해당 버전 점프 절차 확인",
+      "severity": "HIGH"
+    }
+  ],
+
+  "k8s_breaks": {}
+}

@@ -54,6 +54,28 @@ EKS 업그레이드처럼 **고위험·다단계·장기 체공** 작업은 운�
   - Fargate 프로파일 정의(IaC) 변경은 하지 않지만, CP 업그레이드 후 Fargate 노드 kubelet 갱신을 위한 Pod `rollout restart`는 Phase 7-0에서 수행합니다
 - 현재 지원하지 않는 플랫폼/IaC 조합 (개발 현황 참조)
 
+## 함께 설치되는 스킬: helm-k8s-compat
+
+`install.sh`는 두 개의 독립 스킬을 함께 설치합니다.
+
+| 스킬 | 역할 | 트리거 |
+|------|------|--------|
+| `k8s-upgrade-skills` | K8s/EKS 버전 업그레이드 (Phase-gated) | "EKS 클러스터를 업그레이드해줘" |
+| `helm-k8s-compat` | Helm 차트 ↔ K8s 버전 호환성 **사전 점검** | "Helm 차트 호환성 점검해줘" |
+
+`helm-k8s-compat`은 EKS Insights·kubent가 못 잡는 **차트 레벨 호환성 함정**을 업그레이드 전에 검출합니다. 두 도구는 라이브 API 서버에 호출된 API만 스캔하지만, 실제 업그레이드를 깨먹는 건 대부분 "이 차트 버전이 대상 K8s를 지원하는가, 컨트롤러가 계속 작동하는가" — 릴리스 노트와 지원 매트릭스에만 있는 지식입니다.
+
+De-facto 표준 차트(ingress-nginx, cert-manager, cluster-autoscaler, aws-load-balancer-controller, kube-prometheus-stack)를 큐레이션한 registry와 라이브 `helm` 조회를 결합해 다음을 검출합니다:
+
+- **지원 버전 윈도우 초과** — 예: ingress-nginx 4.13.x는 K8s 1.33이 상한 → 1.34 업그레이드 전 차트를 먼저 올려야 함
+- **retirement / EOL** — 차트 전체 retirement(ingress-nginx 2026-03) 또는 release별 날짜 EOL(cert-manager)
+- **K8s API 제거 충돌** — 버전 점프 구간에 걸린 제거 API (PSP, v1beta1 Ingress 등)
+- **수동 업그레이드 함정** — Helm이 자동 처리하지 않는 CRD 재적용 / IAM 정책 / webhook 전환
+
+판정은 `helm_compat_check.py`의 exit code(0/1/2/127)로 결정되며, 기존 스킬과 동일한 신뢰 모델을 따릅니다. 자세한 내용은 [QnA.md](QnA.md)의 "Helm 차트 호환성" 항목을 참고하세요.
+
+> **한계**: registry는 표준 차트를 깊게 큐레이션한 것으로 모든 차트를 망라하지 않습니다. 미등록 차트는 `kubeVersion` best-effort + "수동 검토 필요"로 보고하며 조용히 통과시키지 않습니다. EKS Insights·kubent(API 스캔)와는 **상호 보완** 관계입니다.
+
 ## 로드맵
 
 | # | 기능 | 상태 |
@@ -85,7 +107,7 @@ cd k8s-upgrade-skills
 
 ### install.sh
 
-`install.sh`는 `k8s-upgrade-skills/` 디렉토리를 각 도구의 전역 스킬 경로에 복사합니다. 도구의 설정 파일(mcp.json 등)은 수정하지 않으며, 기존 설정에 영향을 주지 않습니다.
+`install.sh`는 두 개의 최상위 스킬(`k8s-upgrade-skills/`, `helm-k8s-compat/`)을 각 도구의 전역 스킬 경로에 복사합니다. 도구의 설정 파일(mcp.json 등)은 수정하지 않으며, 기존 설정에 영향을 주지 않습니다.
 
 ```bash
 ./install.sh                  # 인터랙티브 — 도구 선택
@@ -259,6 +281,19 @@ graph TD
 │   └── aws/terraform-eks/
 │       ├── SKILL.md                    #     Phase 0~7 실행 절차 + 인라인 모니터 실행 지시
 │       └── reference.md               #     보고서 템플릿, 중단 조건
+├── helm-k8s-compat/                    # AI Agent 스킬 정의 (Helm 호환성 사전 점검 — 독립 트리거)
+│   ├── SKILL.md                        #   워크플로우 (helm ls → registry 대조 → exit code)
+│   ├── reference.md                    #   보고서 템플릿(한/영) + 조치 가이드
+│   ├── scripts/
+│   │   ├── compat_lib.py               #     순수 함수 (버전 파싱/범위 매칭/3축 평가)
+│   │   └── helm_compat_check.py        #     CLI 엔트리포인트 (exit 0/1/2/127)
+│   └── registry/                       #   De-facto 표준 차트 큐레이션 지식
+│       ├── _schema.md                  #     3직교축 스키마 정의 + 차트 추가 체크리스트
+│       ├── ingress-nginx.json          #     window + retirement + k8s_breaks
+│       ├── cert-manager.json           #     window + per_release EOL + CRD
+│       ├── cluster-autoscaler.json     #     minor_pin
+│       ├── aws-load-balancer-controller.json  # unknown + upgrade_hazards
+│       └── kube-prometheus-stack.json  #     unknown + CRD
 ├── docs/
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (모니터 이벤트 해석 포함)
@@ -271,7 +306,9 @@ graph TD
 │   ├── test_audit_event.py            #   audit_event.py 단위 테스트
 │   ├── test_drain_watch.py            #   drain_watch.py 단위 테스트
 │   ├── test_service_watch.py          #   service_watch.py 단위 테스트
-│   └── test_validate_recipe.py        #   validate_recipe.py 단위 테스트 (services 포함)
-├─ install.sh                          # 전역 설치 스크립트
+│   ├── test_validate_recipe.py        #   validate_recipe.py 단위 테스트 (services 포함)
+│   ├── test_helm_compat_check.py      #   compat_lib.py 순수 함수 테스트
+│   └── test_helm_compat_e2e.py        #   helm_compat_check.py 통합 테스트 (CLI/exit code)
+├─ install.sh                          # 전역 설치 스크립트 (두 스킬 설치)
 └── README.md
 ```

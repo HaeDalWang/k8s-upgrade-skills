@@ -14,4 +14,7 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["k8s-upgrade-skills/scripts"]
+pythonpath = [
+    "k8s-upgrade-skills/scripts",
+    "helm-k8s-compat/scripts",
+]
