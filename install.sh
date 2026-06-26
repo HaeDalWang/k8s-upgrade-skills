@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # install.sh - K8s Upgrade Skills Global Installer
 #
+# 두 개의 최상위 스킬을 각 AI 도구의 skills 경로에 설치한다:
+#   - k8s-upgrade-skills : K8s/EKS 버전 업그레이드 (루트 라우터 + Terraform-EKS)
+#   - helm-k8s-compat    : Helm 차트 ↔ K8s 버전 호환성 사전 점검 (독립 트리거 가능)
+#
 # Usage:
 #   ./install.sh                  # interactive tool selection
 #   ./install.sh --tool claude    # install for specific tool
@@ -9,32 +13,51 @@
 #   ./install.sh --status         # show install status
 set -euo pipefail
 
-SKILL_NAME="k8s-upgrade-skills"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_SRC="$SCRIPT_DIR/$SKILL_NAME"
 
-if [[ ! -d "$SKILL_SRC" ]]; then
-  echo "ERROR: $SKILL_SRC not found. Run from repo root." >&2
-  exit 1
-fi
+# 설치 대상 스킬 (최상위 형제 디렉토리)
+SKILLS="k8s-upgrade-skills helm-k8s-compat"
 
-# Required files validation
-REQUIRED_SCRIPTS="scripts/gate_check.py scripts/phase_gate.py scripts/lib.py scripts/validate_recipe.py"
-for f in $REQUIRED_SCRIPTS; do
-  if [[ ! -f "$SKILL_SRC/$f" ]]; then
-    echo "ERROR: Missing required file: $f" >&2
+# 스킬별 필수 파일 검증 목록
+get_required() {
+  case "$1" in
+    k8s-upgrade-skills) echo "scripts/gate_check.py scripts/phase_gate.py scripts/lib.py scripts/validate_recipe.py" ;;
+    helm-k8s-compat)    echo "scripts/helm_compat_check.py scripts/compat_lib.py registry/_schema.md" ;;
+    *) echo "" ;;
+  esac
+}
+
+# 소스 존재 + 필수 파일 검증
+for skill in $SKILLS; do
+  src="$SCRIPT_DIR/$skill"
+  if [[ ! -d "$src" ]]; then
+    echo "ERROR: $src not found. Run from repo root." >&2
     exit 1
   fi
+  for f in $(get_required "$skill"); do
+    if [[ ! -f "$src/$f" ]]; then
+      echo "ERROR: Missing required file: $skill/$f" >&2
+      exit 1
+    fi
+  done
 done
 
-# Tool -> global install path
-get_path() {
+# Tool -> global skills base path
+get_base() {
   case "$1" in
-    claude)      echo "$HOME/.claude/skills/$SKILL_NAME" ;;
-    kiro)        echo "$HOME/.kiro/skills/$SKILL_NAME" ;;
-    cursor)      echo "$HOME/.cursor/skills/$SKILL_NAME" ;;
-    antigravity) echo "$HOME/.agent/skills/$SKILL_NAME" ;;
+    claude)      echo "$HOME/.claude/skills" ;;
+    kiro)        echo "$HOME/.kiro/skills" ;;
+    cursor)      echo "$HOME/.cursor/skills" ;;
+    antigravity) echo "$HOME/.agent/skills" ;;
     *) echo "Unknown: $1" >&2; return 1 ;;
+  esac
+}
+
+# Agent install path (claude only for now)
+get_agent_path() {
+  case "$1" in
+    claude) echo "$HOME/.claude/agents" ;;
+    *) echo "" ;;
   esac
 }
 
@@ -54,6 +77,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 [--tool TOOL] [--all] [--force] [--uninstall] [--status]"
       echo ""
       echo "Tools: claude, kiro, cursor, antigravity"
+      echo "Skills: $SKILLS"
       echo ""
       echo "Options:"
       echo "  --tool TOOL   Install for a specific tool"
@@ -65,7 +89,7 @@ while [[ $# -gt 0 ]]; do
       echo "Examples:"
       echo "  $0                      # interactive"
       echo "  $0 --tool claude        # Claude Code only"
-      echo "  $0 --all                # all supported tools (claude, kiro, cursor, antigravity)"
+      echo "  $0 --all                # all supported tools"
       echo "  $0 --all --force        # update all tools"
       echo "  $0 --uninstall          # remove all"
       echo "  $0 --status             # check status"
@@ -77,38 +101,44 @@ done
 # Uninstall
 if [[ "$ACTION" = "uninstall" ]]; then
   echo ""
-  echo "Uninstalling $SKILL_NAME..."
+  echo "Uninstalling skills..."
   removed=0
   for t in $ALL_TOOLS; do
-    dest=$(get_path "$t")
-    if [[ -d "$dest" ]]; then
-      rm -rf "$dest"
-      echo "  Removed: ${dest/#$HOME/~}"
-      removed=$((removed + 1))
-    fi
+    base=$(get_base "$t")
+    for skill in $SKILLS; do
+      dest="$base/$skill"
+      if [[ -d "$dest" ]]; then
+        rm -rf "$dest"
+        echo "  Removed: ${dest/#$HOME/~}"
+        removed=$((removed + 1))
+      fi
+    done
   done
   echo ""
-  [[ $removed -eq 0 ]] && echo "Nothing to remove." || echo "Removed from $removed location(s)."
+  [[ $removed -eq 0 ]] && echo "Nothing to remove." || echo "Removed $removed item(s)."
   exit 0
 fi
 
 # Status
 if [[ "$ACTION" = "status" ]]; then
   echo ""
-  echo "=== $SKILL_NAME install status ==="
+  echo "=== install status ==="
   echo ""
   found=0
   for t in $ALL_TOOLS; do
-    dest=$(get_path "$t")
-    if [[ -d "$dest" ]]; then
-      echo "  [OK]   $t -> ${dest/#$HOME/~}"
-      found=$((found + 1))
-    else
-      echo "  [ ]    $t"
-    fi
+    base=$(get_base "$t")
+    echo "  $t -> ${base/#$HOME/~}"
+    for skill in $SKILLS; do
+      if [[ -d "$base/$skill" ]]; then
+        echo "    [OK]   $skill"
+        found=$((found + 1))
+      else
+        echo "    [ ]    $skill"
+      fi
+    done
   done
   echo ""
-  [[ $found -eq 0 ]] && echo "Not installed." || echo "Installed in $found location(s)."
+  [[ $found -eq 0 ]] && echo "Not installed." || echo "Installed $found skill instance(s)."
   exit 0
 fi
 
@@ -117,12 +147,14 @@ if [[ -z "$SELECTED" ]]; then
   echo ""
   echo "=== K8s Upgrade Skills Installer ==="
   echo ""
+  echo "Skills: $SKILLS"
+  echo ""
   echo "Select tool (comma-separated, 'a' for all, 'q' to quit):"
   echo ""
   i=1
   for t in $ALL_TOOLS; do
-    dest=$(get_path "$t")
-    echo "  $i) $t  -> ${dest/#$HOME/~}"
+    base=$(get_base "$t")
+    echo "  $i) $t  -> ${base/#$HOME/~}"
     i=$((i + 1))
   done
   echo ""
@@ -149,47 +181,44 @@ fi
 
 [[ -z "$SELECTED" ]] && { echo "No tools selected."; exit 1; }
 
-# Agent install path (claude only for now)
-get_agent_path() {
-  case "$1" in
-    claude) echo "$HOME/.claude/agents" ;;
-    *) echo "" ;;
-  esac
-}
-
-AGENT_SRC="$SKILL_SRC/agents"
-
 # Install
 echo ""
-echo "Installing $SKILL_NAME..."
+echo "Installing skills..."
 echo ""
 for t in $SELECTED; do
-  dest=$(get_path "$t")
-  if [[ -d "$dest" ]]; then
-    if [[ "$FORCE" = true ]]; then
-      rm -rf "$dest"
-      echo "  [UPD]  $t: updating (${dest/#$HOME/~})"
-    else
-      echo "  [SKIP] $t: already installed (use --force to update)"
-      continue
-    fi
-  fi
-  mkdir -p "$(dirname "$dest")"
-  cp -r "$SKILL_SRC" "$dest"
-  echo "  [OK]   $t -> ${dest/#$HOME/~}"
+  base=$(get_base "$t")
+  mkdir -p "$base"
 
-  # Install agent definitions (claude only)
-  agent_dest=$(get_agent_path "$t")
-  if [[ -n "$agent_dest" && -d "$AGENT_SRC" ]]; then
-    mkdir -p "$agent_dest"
-    for agent_file in "$AGENT_SRC"/*.md; do
-      [[ -f "$agent_file" ]] || continue
-      cp "$agent_file" "$agent_dest/"
-      echo "  [OK]   $t agent: ${agent_dest/#$HOME/~}/$(basename "$agent_file")"
-    done
-  fi
+  for skill in $SKILLS; do
+    src="$SCRIPT_DIR/$skill"
+    dest="$base/$skill"
+    if [[ -d "$dest" ]]; then
+      if [[ "$FORCE" = true ]]; then
+        rm -rf "$dest"
+        echo "  [UPD]  $t/$skill: updating (${dest/#$HOME/~})"
+      else
+        echo "  [SKIP] $t/$skill: already installed (use --force to update)"
+        continue
+      fi
+    fi
+    cp -r "$src" "$dest"
+    echo "  [OK]   $t -> ${dest/#$HOME/~}"
+
+    # Install agent definitions (claude only, skill이 agents/를 가질 때만)
+    agent_dest=$(get_agent_path "$t")
+    agent_src="$src/agents"
+    if [[ -n "$agent_dest" && -d "$agent_src" ]]; then
+      mkdir -p "$agent_dest"
+      for agent_file in "$agent_src"/*.md; do
+        [[ -f "$agent_file" ]] || continue
+        cp "$agent_file" "$agent_dest/"
+        echo "  [OK]   $t agent: ${agent_dest/#$HOME/~}/$(basename "$agent_file")"
+      done
+    fi
+  done
 done
 
 echo ""
-echo "Done! Create recipe.yaml in your EKS project, then ask your AI agent:"
-echo '  "EKS 클러스터를 업그레이드해줘"'
+echo "Done! Skills installed:"
+echo "  - k8s-upgrade-skills : \"EKS 클러스터를 업그레이드해줘\""
+echo "  - helm-k8s-compat    : \"Helm 차트 호환성 점검해줘\""
