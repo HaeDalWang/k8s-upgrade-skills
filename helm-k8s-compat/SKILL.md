@@ -133,8 +133,10 @@ user the latest official support guidance instead of guessing.
 ## Known Limitations (state these honestly)
 
 - **Registry coverage is curated, not exhaustive.** Only de-facto-standard charts are deeply modeled.
-  Unregistered charts get a best-effort `kubeVersion` note and a "manual review required" flag — never a silent pass.
-- **`kubeVersion` is a weak signal.** Most charts declare only a lower bound (`>=1.21`), so it rarely
+  Unregistered charts are flagged "manual review required" (INFO) — never a silent pass. The checker does
+  not itself read `kubeVersion`; when reviewing an unregistered chart, inspect it manually with
+  `helm show chart <release>` and consult the chart's release notes.
+- **`kubeVersion` is a weak signal anyway.** Most charts declare only a lower bound (`>=1.21`), so it rarely
   catches incremental-upgrade blockers. The curated registry is the real source of truth.
 - **Support matrices drift.** Registry data reflects the date it was curated. For `unknown` charts and
   borderline cases, the live `compat_source` fetch is authoritative.

@@ -11,6 +11,7 @@ Python 3.9+ stdlib only — 서드파티 의존성 없음.
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -68,6 +69,37 @@ def k8s_gt(a: str, b: str) -> bool:
     return parse_minor(a) > parse_minor(b)
 
 
+def k8s_lt(a: str, b: str) -> bool:
+    """K8s 버전 a가 b보다 minor 기준으로 작은가. '1.30' < '1.31' → True."""
+    return parse_minor(a) < parse_minor(b)
+
+
+# K8s 버전 문자열 형식: 최소 major.minor (patch 선택적)
+_K8S_VERSION_RE = re.compile(r"^v?\d+\.\d+(\.\d+.*)?$")
+
+
+def is_valid_k8s_version(ver: str) -> bool:
+    """K8s 버전 문자열이 major.minor(.patch) 형식인지. 시스템 경계 검증용."""
+    return bool(_K8S_VERSION_RE.match(ver))
+
+
+def _semver_tuple(ver: str) -> tuple:
+    """차트 버전을 (major, minor, patch) 정수 튜플로. 누락 자리는 0. 'v4.14' → (4, 14, 0)."""
+    parts = _strip_v(ver).split(".")
+    nums = []
+    for p in parts[:3]:
+        m = re.match(r"^\d+", p)
+        nums.append(int(m.group()) if m else 0)
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def chart_ge(a: str, b: str) -> bool:
+    """차트 버전 a가 b 이상인가(semver major.minor.patch 비교). '4.14.2' >= '4.0.0' → True."""
+    return _semver_tuple(a) >= _semver_tuple(b)
+
+
 # ══════════════════════════════════════════════════════════════
 # 1축: support — 대상 K8s 버전을 지원하나?
 # ══════════════════════════════════════════════════════════════
@@ -96,11 +128,17 @@ def evaluate_support(entry: dict, installed_chart_ver: str,
         for row in support.get("matrix", []):
             if version_matches_range(installed_chart_ver, row["chart_range"]):
                 k_max = row["k8s_max"]
+                k_min = row.get("k8s_min")
                 if k8s_gt(target_k8s, k_max):
                     return Finding(
                         "HELM-SUPPORT", "FAIL", "CRITICAL",
                         f"{chart_name} {installed_chart_ver}: K8s {k_max} 상한 — "
                         f"target {target_k8s} 지원하려면 차트를 먼저 올려야 함")
+                if k_min and k8s_lt(target_k8s, k_min):
+                    return Finding(
+                        "HELM-SUPPORT", "FAIL", "HIGH",
+                        f"{chart_name} {installed_chart_ver}: K8s {k_min} 하한 — "
+                        f"target {target_k8s}는 이 차트 버전의 지원 범위보다 낮음(차트가 너무 최신)")
                 return Finding(
                     "HELM-SUPPORT", "PASS", "LOW",
                     f"{chart_name} {installed_chart_ver}: target {target_k8s} 지원 범위 내")
@@ -171,8 +209,14 @@ def evaluate_lifecycle(entry: dict, installed_ver: str,
 # ══════════════════════════════════════════════════════════════
 # k8s_breaks — K8s 버전 점프 사건 (점프 구간만 발화)
 # ══════════════════════════════════════════════════════════════
-def fired_k8s_breaks(entry: dict, current_k8s: str, target_k8s: str) -> list:
-    """current < V <= target 구간에 걸린 k8s_breaks 항목만 Finding 리스트로 반환한다."""
+def fired_k8s_breaks(entry: dict, current_k8s: str, target_k8s: str,
+                     installed_chart_ver: str = "") -> list:
+    """current < V <= target 구간에 걸린 k8s_breaks 항목만 Finding 리스트로 반환한다.
+
+    break에 requires_chart_min이 있으면, 설치 차트가 그 최소 버전을 이미 충족한 경우
+    발화하지 않는다(false BLOCK 방지). 설치 차트 버전을 알 수 없으면(빈 문자열) 안전하게
+    발화한다(false 안심 방지).
+    """
     breaks = entry.get("k8s_breaks", {})
     chart_name = entry.get("chart_name", "?")
     cur = parse_minor(current_k8s)
@@ -181,13 +225,17 @@ def fired_k8s_breaks(entry: dict, current_k8s: str, target_k8s: str) -> list:
     out = []
     for ver_key, info in sorted(breaks.items(), key=lambda kv: parse_minor(kv[0])):
         v = parse_minor(ver_key)
-        if cur < v <= tgt:
-            requires = info.get("requires", "")
-            detail = f"{chart_name}: K8s {ver_key} — {info.get('change', '')}"
-            if requires:
-                detail += f" (요구: {requires})"
-            out.append(Finding("HELM-K8SBREAK", "FAIL",
-                               info.get("severity", "HIGH"), detail))
+        if not (cur < v <= tgt):
+            continue
+        requires_min = info.get("requires_chart_min", "")
+        # 요구 최소 버전이 있고, 설치 차트가 이를 충족하면 이미 안전 → 발화 안 함
+        if requires_min and installed_chart_ver and chart_ge(installed_chart_ver, requires_min):
+            continue
+        detail = f"{chart_name}: K8s {ver_key} — {info.get('change', '')}"
+        if requires_min:
+            detail += f" (요구: chart >= {requires_min})"
+        out.append(Finding("HELM-K8SBREAK", "FAIL",
+                           info.get("severity", "HIGH"), detail))
     return out
 
 
@@ -212,6 +260,8 @@ def load_registry(registry_dir: str) -> dict:
     """registry_dir의 *.json을 chart_name으로 키잉한 dict로 로드한다.
 
     .md(스키마 문서)는 무시한다. 디렉토리가 없으면 빈 dict 반환.
+    파손된 JSON이나 chart_name 누락은 조용히 삼키지 않고 stderr로 경고한다
+    (오타 하나로 차트가 사라져 false 안심을 주는 것을 방지).
     """
     d = Path(registry_dir)
     if not d.is_dir():
@@ -220,9 +270,14 @@ def load_registry(registry_dir: str) -> dict:
     for f in sorted(d.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"WARNING: registry 파일 로드 실패, 스킵함: {f.name} ({e})",
+                  file=sys.stderr)
             continue
         name = data.get("chart_name")
         if name:
             reg[name] = data
+        else:
+            print(f"WARNING: registry 파일에 chart_name 없음, 스킵함: {f.name}",
+                  file=sys.stderr)
     return reg
