@@ -929,16 +929,20 @@ def check_cap003(cluster_name: str) -> None:
 # ══════════════════════════════════════════════════════════════
 # run_terraform_plan: Terraform plan 헬퍼
 # ══════════════════════════════════════════════════════════════
-def run_terraform_plan(tf_dir: str, var_file: str = None) -> tuple[int, str]:
+def run_terraform_plan(tf_dir: str, var_file: str = None, auth_prefix: str = "") -> tuple[int, str]:
     """terraform plan -detailed-exitcode -no-color 실행. 반환: (exit_code, output).
 
     var_file이 주어지면 `-var-file=<var_file>`을 추가한다 (workspace별 tfvars 등).
-    실제 운영 인증(aws-runas 등)이나 init 상태와 불일치하면 exit 1이 나는데,
+    auth_prefix가 주어지면 terraform 실행 앞에 붙인다 (예: 'aws-runas ezl-switch').
+    aws-runas 같은 MFA 세션 프리픽스가 없으면 인증 실패로 exit 1이 나는데,
     INF-001은 이를 정보성(INFO)으로만 보고하고 게이트를 막지 않는다.
     """
     cmd = ["terraform", "plan", "-detailed-exitcode", "-no-color"]
     if var_file:
         cmd.append(f"-var-file={var_file}")
+    if auth_prefix:
+        import shlex
+        cmd = shlex.split(auth_prefix) + cmd
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True, cwd=tf_dir, timeout=300,
@@ -1091,6 +1095,8 @@ def main() -> None:
                         help="Terraform 구성 디렉토리 (INF-001/INF-004에 필요)")
     parser.add_argument("--tf-var-file", default=None,
                         help="terraform plan에 전달할 var-file (예: ezl-dev.tfvars). recipe의 tf_var_file")
+    parser.add_argument("--auth-prefix", default="",
+                        help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch'). recipe의 auth_prefix")
     args = parser.parse_args()
 
     # 의존성 확인
@@ -1179,7 +1185,7 @@ def main() -> None:
         print("\n── 4단계: 인프라 검증 ──")
         tf_exit_code = None
         if args.tf_dir:
-            tf_exit_code, plan_output = run_terraform_plan(args.tf_dir, args.tf_var_file)
+            tf_exit_code, plan_output = run_terraform_plan(args.tf_dir, args.tf_var_file, args.auth_prefix)
             check_inf001(tf_exit_code, plan_output)
             track("INF-001")
         else:

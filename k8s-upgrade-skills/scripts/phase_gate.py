@@ -594,8 +594,25 @@ def gate_phase5(target_version: str, audit_log: str) -> int:
         return 0
 
 
-def gate_phase6(tf_dir: str, audit_log: str) -> int:
-    """Phase 6: Terraform plan JSON 분석. 반환: exit code (0/1)."""
+def _wrap_auth(cmd: list, auth_prefix: str) -> list:
+    """auth_prefix(예: 'aws-runas ezl-switch')를 명령 앞에 붙인다.
+
+    ezl처럼 terraform 실행에 MFA 세션(aws-runas 등) 프리픽스가 필요한 환경을
+    지원한다. 빈 문자열이면 원본 명령을 그대로 반환한다.
+    """
+    import shlex
+    if not auth_prefix:
+        return cmd
+    return shlex.split(auth_prefix) + cmd
+
+
+def gate_phase6(tf_dir: str, audit_log: str, auth_prefix: str = "", tf_var_file: str = "") -> int:
+    """Phase 6: Terraform plan JSON 분석. 반환: exit code (0/1).
+
+    auth_prefix: terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch').
+    tf_var_file: terraform plan에 전달할 var-file (예: 'ezl-prod.tfvars').
+    둘 다 recipe에서 전달받아 반영한다. 미제공 시 기존 동작 유지.
+    """
     reset_gate()
     audit_init("", "", "")
 
@@ -612,10 +629,14 @@ def gate_phase6(tf_dir: str, audit_log: str) -> int:
     tfplan_path = _Path(tfplan_str)
 
     try:
-        # 1. terraform plan
+        # 1. terraform plan (auth_prefix / var-file 반영)
+        plan_cmd = ["terraform", "plan", f"-out={tfplan_path}"]
+        if tf_var_file:
+            plan_cmd.append(f"-var-file={tf_var_file}")
+        plan_cmd = _wrap_auth(plan_cmd, auth_prefix)
         try:
             plan_result = _sp.run(
-                ["terraform", "plan", f"-out={tfplan_path}"],
+                plan_cmd,
                 capture_output=True, text=True, cwd=tf_dir, timeout=300,
             )
         except (_sp.TimeoutExpired, FileNotFoundError) as e:
@@ -630,10 +651,11 @@ def gate_phase6(tf_dir: str, audit_log: str) -> int:
             audit_flush(audit_log)
             return 1
 
-        # 2. terraform show -json
+        # 2. terraform show -json (auth_prefix 반영 — backend state 접근 가능성 대비)
+        show_cmd = _wrap_auth(["terraform", "show", "-json", str(tfplan_path)], auth_prefix)
         try:
             show_result = _sp.run(
-                ["terraform", "show", "-json", str(tfplan_path)],
+                show_cmd,
                 capture_output=True, text=True, cwd=tf_dir, timeout=60,
             )
         except (_sp.TimeoutExpired, FileNotFoundError) as e:
@@ -822,6 +844,10 @@ def main() -> None:
     p6 = subparsers.add_parser("phase6", help="Phase 6: Terraform Sync 검증")
     p6.add_argument("--tf-dir", required=True)
     p6.add_argument("--audit-log", default="audit.log")
+    p6.add_argument("--auth-prefix", default="",
+                    help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch'). recipe의 auth_prefix")
+    p6.add_argument("--tf-var-file", default="",
+                    help="terraform plan에 전달할 var-file (예: ezl-prod.tfvars). recipe의 tf_var_file")
 
     # ── phase7: Final Validation 검증 ──
     p7 = subparsers.add_parser("phase7", help="Phase 7: Final Validation 검증")
@@ -844,7 +870,7 @@ def main() -> None:
     elif args.phase == "phase5":
         rc = gate_phase5(args.target_version, args.audit_log)
     elif args.phase == "phase6":
-        rc = gate_phase6(args.tf_dir, args.audit_log)
+        rc = gate_phase6(args.tf_dir, args.audit_log, args.auth_prefix, args.tf_var_file)
     elif args.phase == "phase7":
         rc = gate_phase7(args.cluster_name, args.target_version, args.audit_log)
     else:
