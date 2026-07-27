@@ -131,15 +131,39 @@ def poll_health(url: str) -> bool:
     return r.returncode == 0
 
 
+def poll_service_exists(name: str, ns: str) -> bool:
+    """서비스 존재 여부. kubectl get svc 성공(0)이면 True.
+
+    recipe의 services 항목이 실제 클러스터와 다를 때(오타·릴리스명 누락 등)
+    조용히 무시되지 않도록, 감시 시작 전에 존재를 확인하는 데 쓴다.
+    """
+    r = run_cmd(["kubectl", "get", "svc", "-n", ns, name, "-o", "name"], timeout=15)
+    return r.returncode == 0
+
+
 # ══════════════════════════════════════════════════════════════
 # 감시 루프
 # ══════════════════════════════════════════════════════════════
 def watch_loop(phase: str, audit_log: str, services: list, interval: int,
                max_duration: int, stop_file: str = None,
                endpoints_fn=poll_endpoints, health_fn=poll_health,
+               exists_fn=poll_service_exists,
                sleep_fn=time.sleep, clock=time.monotonic) -> int:
     """서비스 가용성 폴링 루프. 의존성 주입 가능(테스트용). 반환: exit code."""
     rule_id = f"SVC-{phase}"
+
+    # 서비스 존재 사전 확인 — recipe에 잘못 적힌 서비스는 조용히 무시되지 않도록
+    # WARN을 남기고 감시 대상에서 제외한다(없는 서비스의 ready=0 스팸 방지).
+    present = []
+    for svc in services:
+        if exists_fn(svc["name"], svc["namespace"]):
+            present.append(svc)
+        else:
+            msg = (f"{svc['namespace']}/{svc['name']}: Service 없음 — "
+                   f"recipe services 항목을 실측(kubectl get svc)으로 확인하세요. 감시 대상에서 제외")
+            audit_append(audit_log, rule_id, "WARN", msg)
+            print(f"[WARN] {msg}", flush=True)
+    services = present
 
     # BestEffort 경고 — health_check_url 없는 서비스는 EndpointSlice만 감시
     for svc in services:
