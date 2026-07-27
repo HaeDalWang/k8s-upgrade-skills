@@ -202,6 +202,115 @@ class TestFiredK8sBreaks:
         assert fs == []
 
 
+class TestFiredK8sBreaksRequiresChartMin:
+    """requires_chart_min 조건 평가 — 설치 차트가 요구 최소 버전을 충족하면 발화하지 않아야 함."""
+
+    BREAKS = {
+        "k8s_breaks": {
+            "1.22": {
+                "change": "networking.k8s.io/v1beta1 Ingress 제거",
+                "requires_chart_min": "4.0.0",
+                "severity": "CRITICAL",
+            },
+        }
+    }
+
+    def test_installed_chart_meets_requirement_no_fire(self):
+        # 설치 차트 4.14.2 >= 요구 4.0.0 → 이미 충족, 차단하지 않음
+        fs = compat_lib.fired_k8s_breaks(
+            self.BREAKS, current_k8s="1.21", target_k8s="1.25",
+            installed_chart_ver="4.14.2")
+        assert fs == []
+
+    def test_installed_chart_below_requirement_fires(self):
+        # 설치 차트 3.40.0 < 요구 4.0.0 → 차단
+        fs = compat_lib.fired_k8s_breaks(
+            self.BREAKS, current_k8s="1.21", target_k8s="1.25",
+            installed_chart_ver="3.40.0")
+        assert len(fs) == 1
+        assert fs[0].severity == "CRITICAL"
+
+    def test_no_requires_field_always_fires(self):
+        # requires_chart_min 없는 break(예: PSP 제거)는 차트 버전과 무관하게 발화
+        breaks = {"k8s_breaks": {"1.25": {"change": "PSP 제거", "severity": "HIGH"}}}
+        fs = compat_lib.fired_k8s_breaks(
+            breaks, current_k8s="1.24", target_k8s="1.25",
+            installed_chart_ver="4.14.2")
+        assert len(fs) == 1
+
+    def test_missing_installed_ver_still_fires_conservatively(self):
+        # 설치 차트 버전 판별 불가 → 안전하게 발화(false 안심 방지)
+        fs = compat_lib.fired_k8s_breaks(
+            self.BREAKS, current_k8s="1.21", target_k8s="1.25",
+            installed_chart_ver="")
+        assert len(fs) == 1
+
+
+class TestChartVersionCompare:
+    """chart_ge: 차트 버전 semver 비교 (requires_chart_min 평가에 사용)."""
+
+    def test_greater_patch(self):
+        assert compat_lib.chart_ge("4.14.2", "4.0.0") is True
+
+    def test_equal(self):
+        assert compat_lib.chart_ge("4.0.0", "4.0.0") is True
+
+    def test_less(self):
+        assert compat_lib.chart_ge("3.40.0", "4.0.0") is False
+
+    def test_v_prefix_normalized(self):
+        assert compat_lib.chart_ge("v4.14.2", "4.0.0") is True
+
+    def test_minor_only_string(self):
+        # patch 없는 "4.14" 도 허용
+        assert compat_lib.chart_ge("4.14", "4.0.0") is True
+
+
+class TestWindowLowerBound:
+    """window 평가에서 target이 k8s_min 미만이면(차트가 너무 새것) 검출."""
+
+    WINDOW = {
+        "type": "window",
+        "matrix": [
+            {"chart_range": "4.15.x", "k8s_min": "1.31", "k8s_max": "1.35"},
+        ],
+    }
+
+    def test_target_below_kmin_fails(self):
+        # chart 4.15.x는 K8s 1.31 하한 → 1.30으로는 지원 범위 밖
+        f = compat_lib.evaluate_support(
+            {"support": self.WINDOW, "chart_to_app": "same"},
+            installed_chart_ver="4.15.1", installed_app_ver="1.15.1",
+            target_k8s="1.30")
+        assert f.result == "FAIL"
+
+    def test_target_at_kmin_passes(self):
+        f = compat_lib.evaluate_support(
+            {"support": self.WINDOW, "chart_to_app": "same"},
+            installed_chart_ver="4.15.1", installed_app_ver="1.15.1",
+            target_k8s="1.31")
+        assert f.result == "PASS"
+
+
+class TestVersionValidation:
+    """K8s 버전 문자열 검증 — 시스템 경계 fail-fast."""
+
+    def test_valid_minor(self):
+        assert compat_lib.is_valid_k8s_version("1.33") is True
+
+    def test_valid_with_patch(self):
+        assert compat_lib.is_valid_k8s_version("1.33.2") is True
+
+    def test_missing_minor_invalid(self):
+        assert compat_lib.is_valid_k8s_version("1") is False
+
+    def test_non_numeric_invalid(self):
+        assert compat_lib.is_valid_k8s_version("abc") is False
+
+    def test_empty_invalid(self):
+        assert compat_lib.is_valid_k8s_version("") is False
+
+
 # ══════════════════════════════════════════════════════════════
 # 횡단 규칙: Helm CRD 자동 업글 안 함
 # ══════════════════════════════════════════════════════════════
@@ -233,3 +342,33 @@ class TestLoadRegistry:
 
     def test_missing_dir_returns_empty(self):
         assert compat_lib.load_registry("/nonexistent/path/xyz") == {}
+
+    def test_corrupt_json_warns_to_stderr(self, tmp_path, capsys):
+        # 파손된 JSON은 조용히 삼키지 말고 stderr로 경고 — false 안심 방지
+        (tmp_path / "broken.json").write_text("{ not valid json", encoding="utf-8")
+        (tmp_path / "ok.json").write_text(
+            json.dumps({"chart_name": "ok", "support": {"type": "unknown"}}),
+            encoding="utf-8")
+        reg = compat_lib.load_registry(str(tmp_path))
+        # 정상 파일은 로드되고, 파손 파일은 경고만 남기고 스킵
+        assert "ok" in reg
+        err = capsys.readouterr().err
+        assert "broken.json" in err
+
+    def test_missing_chart_name_warns(self, tmp_path, capsys):
+        # chart_name 없는 JSON도 조용히 무시하지 말고 경고
+        (tmp_path / "nameless.json").write_text(
+            json.dumps({"support": {"type": "unknown"}}), encoding="utf-8")
+        compat_lib.load_registry(str(tmp_path))
+        err = capsys.readouterr().err
+        assert "nameless.json" in err
+
+
+# ══════════════════════════════════════════════════════════════
+# parse_chart_ref — 비정상 입력 방어
+# ══════════════════════════════════════════════════════════════
+class TestParseChartRefDefensive:
+    def test_latest_tag_no_crash(self):
+        # "my-app-latest" 같은 비정상 chart 필드 — 크래시 없이 빈 버전 반환
+        name, ver = compat_lib.parse_chart_ref("my-app-latest")
+        assert ver == ""

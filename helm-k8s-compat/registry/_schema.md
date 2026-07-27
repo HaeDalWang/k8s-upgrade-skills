@@ -62,7 +62,11 @@ helm은 **chart 버전**(예: cluster-autoscaler 9.51.0)을 주지만, 호환성
   ]
 }
 ```
-**평가**: 설치된 chart 버전 → 매칭 range → `target > k8s_max`면 **FAIL** (차트 먼저 올려야 함).
+**평가**: 설치된 chart 버전 → 매칭 range →
+
+- `target > k8s_max`면 **FAIL/CRITICAL** (차트가 너무 구버전 — 먼저 올려야 함).
+- `target < k8s_min`면 **FAIL/HIGH** (차트가 너무 최신 — target이 이 차트의 지원 하한보다 낮음).
+- 그 사이면 **PASS**.
 
 ### `minor_pin` — K8s minor와 app minor가 1:1 (cluster-autoscaler)
 ```jsonc
@@ -148,10 +152,15 @@ support 평가 결과 "차트를 올려야 한다"가 나올 때 함께 발화�
 
 ```jsonc
 "k8s_breaks": {
-  "1.22": { "change": "networking.k8s.io/v1beta1 Ingress 제거", "requires": "chart >= 4.0.0", "severity": "CRITICAL" },
+  "1.22": { "change": "networking.k8s.io/v1beta1 Ingress 제거", "requires_chart_min": "4.0.0", "severity": "CRITICAL" },
   "1.25": { "change": "PodSecurityPolicy 제거", "severity": "HIGH" }
 }
 ```
+
+**`requires_chart_min`** (선택): 이 API 제거를 안전하게 넘길 수 있는 **최소 차트 버전**.
+설치된 차트가 이 버전 이상이면 이미 대응된 것이므로 발화하지 않는다(false BLOCK 방지).
+설치 차트 버전을 판별할 수 없으면(빈 문자열) 안전하게 발화한다(false 안심 방지).
+필드가 없으면 차트 버전과 무관하게 항상 발화한다(예: PSP 제거는 어느 버전이든 영향).
 
 ---
 
@@ -164,8 +173,9 @@ support 평가 결과 "차트를 올려야 한다"가 나올 때 함께 발화�
 | lifecycle / unknown / hazards / k8s_breaks HIGH | HIGH | exit 2 (확인) |
 | 전부 통과 | — | exit 0 |
 
-- `exit 0` = PASS / `exit 1` = FAIL(차단) / `exit 2` = WARN(수동 검토)
-- registry에 없는 차트 → `kubeVersion` best-effort 평가 + "수동 검토 필요" INFO
+- `exit 0` = PASS / `exit 1` = FAIL(차단) / `exit 2` = WARN(수동 검토) / `exit 127` = helm 미존재
+- registry에 없는 차트 → "수동 검토 필요" INFO (gate 차단 안 함). 체커가 `kubeVersion`을 직접
+  읽지는 않으므로, 검토 시 `helm show chart`·릴리스 노트를 사람이 확인한다.
 
 ---
 
