@@ -135,7 +135,7 @@ The script checks these 18 rules:
 - WLS-004: Local storage pods (hostPath detection)
 - WLS-005: Long-running jobs (age > 30min, restartPolicy=Never)
 - WLS-006: Topology constraint violations (TSC DoNotSchedule, Required Affinity)
-- CAP-001: Node capacity headroom (CPU/MEM utilization)
+- CAP-001: Node capacity headroom (CPU/MEM utilization). Estimated from Pod **requests**; also annotates actual usage via `kubectl top nodes` when metrics-server exists. On Karpenter clusters, if requests-estimate exceeds the threshold but actual usage is within it, the finding is **relaxed to MEDIUM (info-only)** — new nodes auto-provision, so Pending resolves itself.
 - CAP-002: Resource pressure pods (OOMKilled, CrashLoop, ImagePull, Evicted)
 - CAP-003: Surge capacity (subnet available IPs)
 - INF-001: Terraform state drift (**info-only — never blocks the gate**; requires --tf-dir). May be unable to run under mismatched auth/var-file — that is expected and reported as INFO.

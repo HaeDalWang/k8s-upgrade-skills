@@ -28,6 +28,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # ══════════════════════════════════════════════════════════════
 # 공통 헬퍼 import (lib.py)
@@ -723,6 +724,36 @@ def check_inf002(cluster_name: str, target_version: str) -> None:
 # ══════════════════════════════════════════════════════════════
 # CAP-001: 노드 용량 여유분 검증 (HIGH)
 # ══════════════════════════════════════════════════════════════
+def _top_nodes_max_pct() -> Optional[float]:
+    """kubectl top nodes 실측 최대 사용률(%) 반환. metrics-server 없으면 None.
+
+    requests 기반 추정은 requests 미설정 컨테이너가 많으면 과대/과소 추정되므로,
+    실측치를 병기해 판단 근거를 제공한다.
+    """
+    r = run_cmd(["kubectl", "top", "nodes", "--no-headers"], timeout=15)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    max_pct = 0.0
+    for line in r.stdout.strip().splitlines():
+        cols = line.split()
+        # 형식: NAME  CPU(cores)  CPU%  MEMORY(bytes)  MEMORY%
+        if len(cols) < 5:
+            continue
+        for pct_str in (cols[2], cols[4]):
+            if pct_str.endswith("%"):
+                try:
+                    max_pct = max(max_pct, float(pct_str.rstrip("%")))
+                except ValueError:
+                    pass
+    return max_pct if max_pct > 0 else None
+
+
+def _has_karpenter() -> bool:
+    """Karpenter NodeClaim CRD 존재 여부 — 새 노드 자동 프로비저닝 가능 판단용."""
+    r = run_cmd(["kubectl", "get", "crd", "nodeclaims.karpenter.sh"], timeout=10)
+    return r.returncode == 0
+
+
 def check_cap001() -> None:
     nodes = kubectl_json("nodes", all_ns=False)
     pods = kubectl_json("pods", timeout=60)
@@ -776,15 +807,32 @@ def check_cap001() -> None:
                       f"실제 사용률이 이 추정치보다 높을 수 있음 (requests 기반 계산)")
 
     util = int(max_pct)
+
+    # 실측(top nodes) 병기 — metrics-server 있을 때만
+    top_max = _top_nodes_max_pct()
+    measured = f" | 실측(top nodes) 최대 {int(top_max)}%" if top_max is not None else ""
+
+    # 임계 이하 — 여유 충분
+    if util <= CAP_WARN_PCT:
+        record("CAP-001", "HIGH", "PASS",
+               f"최대 노드 사용률 {util}% (여유 충분){measured}{blind_spot}")
+        return
+
+    # 임계 초과이나 Karpenter + 실측 여유면 완화 (MEDIUM — 게이트 미차단)
+    # requests 과대추정으로 인한 오탐 FAIL 방지. 실측 없으면 보수적으로 HIGH 유지.
+    if _has_karpenter() and top_max is not None and top_max <= CAP_WARN_PCT:
+        record("CAP-001", "MEDIUM", "FAIL",
+               f"requests 추정 사용률 {util}% (임계 초과)이나 실측 최대 {int(top_max)}%로 여유 있음 — "
+               f"Karpenter 자동 프로비저닝 환경, Pending 시 노드 자동 증설{blind_spot}")
+        return
+
+    # 완화 불가 — 기존 HIGH FAIL 유지
     if util > CAP_CRIT_PCT:
         record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> {CAP_CRIT_PCT}% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요{blind_spot}")
-    elif util > CAP_WARN_PCT:
-        record("CAP-001", "HIGH", "FAIL",
-               f"최대 노드 사용률 {util}% (> {CAP_WARN_PCT}% — drain 시 여유 부족) → 노드 스케일업 권장{blind_spot}")
+               f"최대 노드 사용률 {util}% (> {CAP_CRIT_PCT}% — Pod Pending 위험) → 노드 스케일업 후 재시도하세요{measured}{blind_spot}")
     else:
-        record("CAP-001", "HIGH", "PASS",
-               f"최대 노드 사용률 {util}% (여유 충분){blind_spot}")
+        record("CAP-001", "HIGH", "FAIL",
+               f"최대 노드 사용률 {util}% (> {CAP_WARN_PCT}% — drain 시 여유 부족) → 노드 스케일업 권장{measured}{blind_spot}")
 
 
 # ══════════════════════════════════════════════════════════════
