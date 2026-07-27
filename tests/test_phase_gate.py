@@ -50,6 +50,8 @@ def _build_parser():
     p6 = subparsers.add_parser("phase6")
     p6.add_argument("--tf-dir", required=True)
     p6.add_argument("--audit-log", default="audit.log")
+    p6.add_argument("--auth-prefix", default="")
+    p6.add_argument("--tf-var-file", default="")
 
     p7 = subparsers.add_parser("phase7")
     p7.add_argument("--cluster-name", required=True)
@@ -193,6 +195,22 @@ class TestPhase6Args:
         parser = _build_parser()
         args = parser.parse_args(["phase6", "--tf-dir", "/tmp"])
         assert args.audit_log == "audit.log"
+
+    def test_phase6_auth_prefix_and_var_file_default_empty(self):
+        parser = _build_parser()
+        args = parser.parse_args(["phase6", "--tf-dir", "/tmp"])
+        assert args.auth_prefix == ""
+        assert args.tf_var_file == ""
+
+    def test_phase6_auth_prefix_and_var_file_custom(self):
+        parser = _build_parser()
+        args = parser.parse_args([
+            "phase6", "--tf-dir", "/tmp",
+            "--auth-prefix", "aws-runas ezl-switch",
+            "--tf-var-file", "ezl-prod.tfvars",
+        ])
+        assert args.auth_prefix == "aws-runas ezl-switch"
+        assert args.tf_var_file == "ezl-prod.tfvars"
 
 
 class TestPhase7Args:
@@ -2481,6 +2499,80 @@ class TestGatePhase6:
         content = (tmp_path / "audit.log").read_text()
         assert "aws_eks_node_group" in content
         assert "aws_launch_template" in content
+
+
+class TestGatePhase6Auth:
+    """gate_phase6 — auth_prefix / tf_var_file 반영 검증.
+
+    ezl처럼 terraform 실행에 `aws-runas <profile>` 프리픽스 + workspace별 `-var-file`이
+    필수인 환경에서, 게이트가 이 값들을 실제 terraform 명령에 반영하는지 확인한다.
+    (미반영 시 4/4 홉 false FAIL 발생한 실전 결함의 회귀 방지)
+    """
+
+    @staticmethod
+    def _capture_run(plan_json=None):
+        """subprocess.run 호출 args를 기록하는 mock. (side_effect, calls) 반환.
+
+        auth_prefix가 붙으면 args[1]이 바뀌므로 'plan'/'show' 포함 여부로 라우팅한다.
+        """
+        if plan_json is None:
+            plan_json = {"resource_changes": []}
+        calls = []
+
+        def side_effect(args, **kwargs):
+            cmd_list = [str(a) for a in args]
+            calls.append(cmd_list)
+            if "plan" in cmd_list:
+                return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            if "show" in cmd_list:
+                return subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=json.dumps(plan_json), stderr="")
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+
+        return side_effect, calls
+
+    def _run(self, tmp_path, **kwargs):
+        audit = str(tmp_path / "audit.log")
+        tf_dir = str(tmp_path / "tf")
+        (tmp_path / "tf").mkdir()
+        se, calls = self._capture_run()
+        with unittest.mock.patch("subprocess.run", side_effect=se):
+            rc = phase_gate.gate_phase6(tf_dir, audit, **kwargs)
+        return rc, calls
+
+    def test_auth_prefix_prepended_to_plan(self, tmp_path):
+        """auth_prefix가 shlex 분리되어 terraform plan 앞에 붙는다."""
+        rc, calls = self._run(
+            tmp_path, auth_prefix="aws-runas ezl-switch", tf_var_file="ezl-prod.tfvars")
+        assert rc == 0
+        plan_cmd = next(c for c in calls if "plan" in c)
+        assert plan_cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+
+    def test_var_file_appended_to_plan(self, tmp_path):
+        """tf_var_file이 -var-file= 인자로 plan에 반영된다."""
+        rc, calls = self._run(tmp_path, tf_var_file="ezl-prod.tfvars")
+        plan_cmd = next(c for c in calls if "plan" in c)
+        assert "-var-file=ezl-prod.tfvars" in plan_cmd
+
+    def test_auth_prefix_prepended_to_show(self, tmp_path):
+        """auth_prefix는 terraform show에도 붙는다 (backend state 접근 대비)."""
+        rc, calls = self._run(tmp_path, auth_prefix="aws-runas ezl-switch")
+        show_cmd = next(c for c in calls if "show" in c)
+        assert show_cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+
+    def test_no_auth_prefix_keeps_bare_terraform(self, tmp_path):
+        """auth_prefix 미제공 시 기존 동작 유지 — terraform이 맨 앞."""
+        rc, calls = self._run(tmp_path)
+        plan_cmd = next(c for c in calls if "plan" in c)
+        show_cmd = next(c for c in calls if "show" in c)
+        assert plan_cmd[0] == "terraform"
+        assert show_cmd[0] == "terraform"
+
+    def test_no_var_file_omits_var_file_arg(self, tmp_path):
+        """tf_var_file 미제공 시 -var-file 인자가 없다."""
+        rc, calls = self._run(tmp_path)
+        plan_cmd = next(c for c in calls if "plan" in c)
+        assert not any(a.startswith("-var-file=") for a in plan_cmd)
 
 
 # ══════════════════════════════════════════════════════════════

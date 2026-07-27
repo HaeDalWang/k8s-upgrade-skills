@@ -229,6 +229,35 @@ class TestTerraformPlanTimeout300:
                 call_kwargs[1].get('timeout') == 300
 
 
+class TestTerraformPlanAuthPrefix:
+    """run_terraform_plan — auth_prefix / var_file 반영 확인.
+
+    ezl aws-runas + workspace var-file 구조에서 INF-001/INF-004가 실제 인증 하에
+    작동하도록, 명령이 올바르게 조립되는지 검증한다.
+    """
+
+    def _cmd_of(self, mock_run):
+        call = mock_run.call_args
+        return [str(a) for a in (call.args[0] if call.args else call.kwargs["args"])]
+
+    def test_auth_prefix_prepended(self):
+        with unittest.mock.patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            gate_check.run_terraform_plan(
+                "/tmp/tf", var_file="ezl-prod.tfvars", auth_prefix="aws-runas ezl-switch")
+        cmd = self._cmd_of(mock_run)
+        assert cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+        assert "-var-file=ezl-prod.tfvars" in cmd
+
+    def test_no_auth_prefix_keeps_bare_terraform(self):
+        with unittest.mock.patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            gate_check.run_terraform_plan("/tmp/tf")
+        cmd = self._cmd_of(mock_run)
+        assert cmd[0] == "terraform"
+        assert not any(a.startswith("-var-file=") for a in cmd)
+
+
 # ══════════════════════════════════════════════════════════════
 # Task 8.2: Property 1 테스트 — COM-003 Add-on 상태 및 호환성 분류
 # Feature: gate-check-full-deterministic, Property 1: COM-003 Add-on 상태 및 호환성 분류
@@ -1739,13 +1768,21 @@ class TestCap001RequestBlindSpot:
             },
         }
 
+    @staticmethod
+    def _no_metrics_run_cmd():
+        """top nodes / crd 조회 모두 실패 처리 (metrics-server·Karpenter 없음)."""
+        return unittest.mock.patch(
+            "gate_check.run_cmd",
+            return_value=subprocess.CompletedProcess([], 1, "", ""),
+        )
+
     def test_missing_requests_adds_blind_spot_warning(self):
         """requests 미설정 컨테이너 존재 → PASS이지만 사각지대 경고 메시지 포함."""
         pods = [self._pod("no-req-app")]  # requests 없음
         with unittest.mock.patch(
             "gate_check.kubectl_json",
             side_effect=self._nodes_pods_mock(pods),
-        ):
+        ), self._no_metrics_run_cmd():
             gate_check.check_cap001()
         # 사용률은 0%로 PASS이지만 사각지대 경고가 audit에 남아야 함
         audit_text = "\n".join(gate_check._gate.audit_lines)
@@ -1757,10 +1794,91 @@ class TestCap001RequestBlindSpot:
         with unittest.mock.patch(
             "gate_check.kubectl_json",
             side_effect=self._nodes_pods_mock(pods),
-        ):
+        ), self._no_metrics_run_cmd():
             gate_check.check_cap001()
         audit_text = "\n".join(gate_check._gate.audit_lines)
         assert "requests 미설정" not in audit_text
+
+
+# ══════════════════════════════════════════════════════════════
+# CAP-001: Karpenter + 실측(top nodes) 기반 완화
+# ══════════════════════════════════════════════════════════════
+class TestCap001KarpenterRelaxation:
+    """requests 추정이 임계 초과여도 Karpenter + 실측 여유면 MEDIUM으로 완화."""
+
+    def setup_method(self):
+        gate_check.reset_gate()
+
+    @staticmethod
+    def _high_util_kubectl_json():
+        """node-1 cpu 4코어에 3960m 요청 → requests 추정 99%."""
+        nodes = {"items": [{
+            "metadata": {"name": "node-1"},
+            "status": {"allocatable": {"cpu": "4", "memory": "8Gi"}},
+        }]}
+        pods = {"items": [{
+            "metadata": {"name": "heavy", "namespace": "default"},
+            "status": {"phase": "Running"},
+            "spec": {"nodeName": "node-1",
+                     "containers": [{"resources": {"requests": {"cpu": "3960m", "memory": "1Gi"}}}]},
+        }]}
+
+        def side_effect(resource, all_ns=True, timeout=60):
+            if resource == "nodes":
+                return nodes
+            if resource == "pods":
+                return pods
+            return None
+
+        return side_effect
+
+    @staticmethod
+    def _run_cmd(top_pct=None, has_karpenter=False):
+        """run_cmd mock: top nodes 실측치 / Karpenter CRD 존재 여부."""
+        def side_effect(args, timeout=60):
+            if "top" in args:
+                if top_pct is None:
+                    return subprocess.CompletedProcess(args, 1, "", "")
+                return subprocess.CompletedProcess(
+                    args, 0, f"node-1 100m {top_pct}% 1000Mi {top_pct}%\n", "")
+            if "crd" in args:
+                return subprocess.CompletedProcess(args, 0 if has_karpenter else 1, "", "")
+            return subprocess.CompletedProcess(args, 1, "", "")
+
+        return side_effect
+
+    def _run(self, top_pct=None, has_karpenter=False):
+        with unittest.mock.patch("gate_check.kubectl_json", side_effect=self._high_util_kubectl_json()), \
+             unittest.mock.patch("gate_check.run_cmd", side_effect=self._run_cmd(top_pct, has_karpenter)):
+            gate_check.check_cap001()
+        return "\n".join(gate_check._gate.audit_lines)
+
+    def test_karpenter_and_low_actual_relaxes_to_medium(self):
+        """Karpenter O + 실측 61% + 추정 99% → MEDIUM 완화 (게이트 미차단)."""
+        audit = self._run(top_pct=61, has_karpenter=True)
+        assert gate_check.medium_info >= 1
+        assert gate_check.high_warn == 0
+        assert "Karpenter 자동 프로비저닝" in audit
+
+    def test_no_karpenter_keeps_high_fail(self):
+        """Karpenter X + 추정 99% → HIGH FAIL 유지 (완화 안 함)."""
+        self._run(top_pct=61, has_karpenter=False)
+        assert gate_check.high_warn >= 1
+
+    def test_no_metrics_keeps_high_fail_conservative(self):
+        """Karpenter O + 실측 없음(metrics-server 없음) → 보수적 HIGH FAIL 유지."""
+        self._run(top_pct=None, has_karpenter=True)
+        assert gate_check.high_warn >= 1
+
+    def test_high_actual_keeps_high_fail(self):
+        """Karpenter O + 실측도 85%(> 임계) → 완화 안 함, HIGH FAIL."""
+        self._run(top_pct=85, has_karpenter=True)
+        assert gate_check.high_warn >= 1
+
+    def test_measured_value_annotated(self):
+        """실측치가 메시지에 병기된다."""
+        audit = self._run(top_pct=61, has_karpenter=True)
+        assert "실측" in audit and "61%" in audit
 
 
 # ══════════════════════════════════════════════════════════════

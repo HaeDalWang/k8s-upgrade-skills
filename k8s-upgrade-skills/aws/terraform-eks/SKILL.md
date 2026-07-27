@@ -38,7 +38,7 @@ If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` comm
 
 - **terraform** plans/applies: use `--var-file="${TF_VAR_FILE}"` when `tf_var_file` is set (workspace-specific tfvars).
 - **MFA sessions expire** (often 1h). A long Control Plane upgrade can outlast the session. Before starting, refresh the session once (e.g. `aws-runas ezl-switch aws sts get-caller-identity`); if a poll fails mid-upgrade with an auth error, re-authenticate and continue — the upgrade itself is unaffected.
-- The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. If your terraform auth differs (e.g. `aws-runas` vs `AWS_PROFILE`), `INF-001` may be unable to run `terraform plan` — that is now **info-only** (see Phase 0) and does not block the gate.
+- The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. For `terraform`, pass the recipe `auth_prefix` via **`--auth-prefix`** (Phase 0 `gate_check.py`, Phase 6 `phase_gate.py phase6`) so the script runs `terraform` under the correct auth (e.g. `aws-runas`). Without it, `INF-001` may be unable to run `terraform plan` — that is **info-only** (see Phase 0) and does not block the gate — but the **Phase 6** gate does block, so `--auth-prefix`/`--tf-var-file` there are required for auth-prefixed environments.
 
 ---
 
@@ -85,10 +85,11 @@ python3 scripts/gate_check.py \
   --target-version "${TARGET_VERSION}" \
   --tf-dir "${TF_DIR}" \
   --tf-var-file "${TF_VAR_FILE}" \
+  --auth-prefix "${AUTH_PREFIX}" \
   --audit-log audit.log
 ```
 
-(Omit `--tf-var-file` if `tf_var_file` is not in the recipe.)
+(Omit `--tf-var-file` / `--auth-prefix` if `tf_var_file` / `auth_prefix` is not in the recipe. Passing `--auth-prefix` lets INF-001/INF-004 run `terraform plan` under the correct auth — e.g. `aws-runas`.)
 
 Interpret the exit code per the convention table above.
 
@@ -134,7 +135,7 @@ The script checks these 18 rules:
 - WLS-004: Local storage pods (hostPath detection)
 - WLS-005: Long-running jobs (age > 30min, restartPolicy=Never)
 - WLS-006: Topology constraint violations (TSC DoNotSchedule, Required Affinity)
-- CAP-001: Node capacity headroom (CPU/MEM utilization)
+- CAP-001: Node capacity headroom (CPU/MEM utilization). Estimated from Pod **requests**; also annotates actual usage via `kubectl top nodes` when metrics-server exists. On Karpenter clusters, if requests-estimate exceeds the threshold but actual usage is within it, the finding is **relaxed to MEDIUM (info-only)** — new nodes auto-provision, so Pending resolves itself.
 - CAP-002: Resource pressure pods (OOMKilled, CrashLoop, ImagePull, Evicted)
 - CAP-003: Surge capacity (subnet available IPs)
 - INF-001: Terraform state drift (**info-only — never blocks the gate**; requires --tf-dir). May be unable to run under mismatched auth/var-file — that is expected and reported as INFO.
@@ -386,7 +387,7 @@ python3 scripts/service_watch.py --phase P4 --audit-log audit.log \
   --services-json '<SERVICES_JSON>'
 ```
 
-It polls each service's EndpointSlice ready count (vs `min_endpoints`) and HTTP `health_check_url` every 30s, recording `SVC-P4` entries to audit.log. A service without `health_check_url` is monitored EndpointSlice-only (BestEffort, logged once). Check output with BashOutput during the rolling update; a sustained `ready_endpoints < min` or health failure means a real-traffic impact — **STOP and investigate**.
+It polls each service's EndpointSlice ready count (vs `min_endpoints`) and HTTP `health_check_url` every 30s, recording `SVC-P4` entries to audit.log. A service without `health_check_url` is monitored EndpointSlice-only (BestEffort, logged once). On startup each service's existence is verified with `kubectl get svc`; a service **not found is logged WARN and excluded** from monitoring — so populate `services` from **live `kubectl get svc -n <ns>`, not just helm values** (helm values can list services that aren't actually deployed). Check output with BashOutput during the rolling update; a sustained `ready_endpoints < min` or health failure means a real-traffic impact — **STOP and investigate**.
 
 **Terminate after the Phase 4 gate passes**: KillShell, or use `--stop-file`.
 
@@ -581,13 +582,15 @@ After all component upgrades, run a full plan to catch remaining drift.
 ### 6-1. Full Plan and Apply
 
 ```bash
-cd "${TF_DIR}" && terraform plan 2>&1 | tail -40
+cd "${TF_DIR}" && ${AUTH_PREFIX} terraform plan -var-file="${TF_VAR_FILE}" 2>&1 | tail -40
 ```
+
+(Drop `${AUTH_PREFIX}` / `-var-file` if not in the recipe.)
 
 If non-destructive changes exist, apply:
 
 ```bash
-cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
+cd "${TF_DIR}" && ${AUTH_PREFIX} terraform apply -var-file="${TF_VAR_FILE}" -auto-approve 2>&1
 ```
 
 ### 6-2. Gate Verification
@@ -595,8 +598,12 @@ cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
 ```bash
 python3 scripts/phase_gate.py phase6 \
   --tf-dir "${TF_DIR}" \
+  --auth-prefix "${AUTH_PREFIX}" \
+  --tf-var-file "${TF_VAR_FILE}" \
   --audit-log audit.log
 ```
+
+(Omit `--auth-prefix` / `--tf-var-file` if not in the recipe.) The gate runs `terraform plan`/`show` **inside** the script, so it cannot inherit a shell prefix — you MUST pass `--auth-prefix`/`--tf-var-file` here, or the plan fails (exit 1) and the gate wrongly FAILs. This is a real bug that caused false FAILs before these flags existed.
 
 Interpret exit code per convention table. The script uses `terraform show -json` for plan analysis (not text parsing). On PASS, proceed to Phase 7.
 

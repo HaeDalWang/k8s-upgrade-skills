@@ -67,14 +67,26 @@ WATCHED_REASONS: dict = {
 DEFAULT_INTERVAL_SEC = 30
 DEFAULT_MAX_DURATION_SEC = 3600
 
+# 노드 교체 중 여러 Pod/노드에 걸쳐 대량으로 정상 발생하는 노이즈성 reason.
+# 이들은 count가 오를 때마다(폴링마다) 재기록하면 audit.log를 폭주시키므로
+# (실전: secrets-store FailedMount·NodeNotReady 수백 줄) uid당 1회만 기록한다.
+# FailedDrain/OOMKilling 등 본질 신호는 count를 포함해 재발도 잡는다.
+NOISY_REASONS: set = {"FailedMount", "NodeNotReady", "NodeNotSchedulable"}
+
 
 # ══════════════════════════════════════════════════════════════
 # 순수 감지 함수 (테스트 대상 — kubectl 호출 없음)
 # ══════════════════════════════════════════════════════════════
 def event_key(evt: dict) -> str:
-    """이벤트 고유 키. uid + 발생 횟수(count)로 식별하여 재발도 새 이벤트로 본다."""
+    """이벤트 고유 키.
+
+    노이즈성 reason(NOISY_REASONS)은 uid만으로 식별해 반복 기록을 억제하고,
+    그 외는 uid + 발생 횟수(count)로 식별해 재발도 새 이벤트로 본다.
+    """
     md = evt.get("metadata", {})
     uid = md.get("uid", "") or f"{md.get('namespace', '')}/{md.get('name', '')}"
+    if evt.get("reason", "") in NOISY_REASONS:
+        return uid
     count = evt.get("count")
     if count is None:
         count = evt.get("series", {}).get("count", 1)
