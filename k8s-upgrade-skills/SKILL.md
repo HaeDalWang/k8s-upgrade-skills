@@ -1,5 +1,5 @@
 ---
-name: k8s-version-upgrade
+name: k8s-upgrade-skills
 description: >
   Zero-downtime Kubernetes version upgrade across multiple infrastructure types (AWS EKS, On-prem Kubespray).
   Validates recipe, routes to the correct platform/IaC-specific sub-skill, and enforces phase-gated safety.
