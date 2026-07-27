@@ -154,6 +154,10 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get"]
+  # CAP-001 실측 병기 (kubectl top nodes — metrics-server, 있을 경우)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
 ```
 
 ### Phase 4~7: 업그레이드 모니터링 + Pod 정리
