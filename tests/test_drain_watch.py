@@ -79,6 +79,37 @@ class TestExtractWarningEvents:
         new, _ = drain_watch.extract_warning_events(events, set())
         assert new == []
 
+    def test_noisy_reason_count_increment_not_re_emitted(self):
+        # FailedMount는 노드 교체 중 대량 발생하는 노이즈 — count가 올라도 재기록 X
+        first = {"items": [self._event("FailedMount", uid="u5", count=1)]}
+        _, seen = drain_watch.extract_warning_events(first, set())
+        second = {"items": [self._event("FailedMount", uid="u5", count=7)]}
+        new2, _ = drain_watch.extract_warning_events(second, seen)
+        assert new2 == []
+
+    def test_noisy_nodenotready_count_increment_not_re_emitted(self):
+        first = {"items": [self._event("NodeNotReady", uid="n1", count=1)]}
+        _, seen = drain_watch.extract_warning_events(first, set())
+        second = {"items": [self._event("NodeNotReady", uid="n1", count=3)]}
+        new2, _ = drain_watch.extract_warning_events(second, seen)
+        assert new2 == []
+
+    def test_noisy_reason_still_emitted_once(self):
+        # 노이즈여도 첫 발생은 기록되어야 함 (완전 무시가 아님)
+        events = {"items": [self._event("FailedMount", uid="u5", count=1)]}
+        new, _ = drain_watch.extract_warning_events(events, set())
+        assert len(new) == 1
+        assert new[0]["reason"] == "FailedMount"
+
+    def test_distinct_pods_same_noisy_reason_all_emitted(self):
+        # 서로 다른 Pod(uid)의 같은 노이즈 reason은 각각 기록 (dedup은 동일 객체 한정)
+        events = {"items": [
+            self._event("FailedMount", uid="a", obj="pod-a"),
+            self._event("FailedMount", uid="b", obj="pod-b"),
+        ]}
+        new, _ = drain_watch.extract_warning_events(events, set())
+        assert len(new) == 2
+
 
 # ══════════════════════════════════════════════════════════════
 # extract_blocked_pdbs
