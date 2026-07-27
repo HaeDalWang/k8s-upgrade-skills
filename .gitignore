@@ -17,6 +17,7 @@ history.md
 audit.log
 upgrade-plan-*.md
 upgrade-report-*.md
+upgrade-archives/*
 
 # Python cache
 __pycache__/
@@ -30,3 +31,6 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# local
+.pouch/*
+.claude/settings.json
