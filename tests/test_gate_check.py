@@ -229,6 +229,35 @@ class TestTerraformPlanTimeout300:
                 call_kwargs[1].get('timeout') == 300
 
 
+class TestTerraformPlanAuthPrefix:
+    """run_terraform_plan — auth_prefix / var_file 반영 확인.
+
+    ezl aws-runas + workspace var-file 구조에서 INF-001/INF-004가 실제 인증 하에
+    작동하도록, 명령이 올바르게 조립되는지 검증한다.
+    """
+
+    def _cmd_of(self, mock_run):
+        call = mock_run.call_args
+        return [str(a) for a in (call.args[0] if call.args else call.kwargs["args"])]
+
+    def test_auth_prefix_prepended(self):
+        with unittest.mock.patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            gate_check.run_terraform_plan(
+                "/tmp/tf", var_file="ezl-prod.tfvars", auth_prefix="aws-runas ezl-switch")
+        cmd = self._cmd_of(mock_run)
+        assert cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+        assert "-var-file=ezl-prod.tfvars" in cmd
+
+    def test_no_auth_prefix_keeps_bare_terraform(self):
+        with unittest.mock.patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            gate_check.run_terraform_plan("/tmp/tf")
+        cmd = self._cmd_of(mock_run)
+        assert cmd[0] == "terraform"
+        assert not any(a.startswith("-var-file=") for a in cmd)
+
+
 # ══════════════════════════════════════════════════════════════
 # Task 8.2: Property 1 테스트 — COM-003 Add-on 상태 및 호환성 분류
 # Feature: gate-check-full-deterministic, Property 1: COM-003 Add-on 상태 및 호환성 분류

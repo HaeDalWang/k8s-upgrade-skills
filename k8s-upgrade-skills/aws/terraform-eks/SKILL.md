@@ -38,7 +38,7 @@ If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` comm
 
 - **terraform** plans/applies: use `--var-file="${TF_VAR_FILE}"` when `tf_var_file` is set (workspace-specific tfvars).
 - **MFA sessions expire** (often 1h). A long Control Plane upgrade can outlast the session. Before starting, refresh the session once (e.g. `aws-runas ezl-switch aws sts get-caller-identity`); if a poll fails mid-upgrade with an auth error, re-authenticate and continue — the upgrade itself is unaffected.
-- The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. If your terraform auth differs (e.g. `aws-runas` vs `AWS_PROFILE`), `INF-001` may be unable to run `terraform plan` — that is now **info-only** (see Phase 0) and does not block the gate.
+- The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. For `terraform`, pass the recipe `auth_prefix` via **`--auth-prefix`** (Phase 0 `gate_check.py`, Phase 6 `phase_gate.py phase6`) so the script runs `terraform` under the correct auth (e.g. `aws-runas`). Without it, `INF-001` may be unable to run `terraform plan` — that is **info-only** (see Phase 0) and does not block the gate — but the **Phase 6** gate does block, so `--auth-prefix`/`--tf-var-file` there are required for auth-prefixed environments.
 
 ---
 
@@ -85,10 +85,11 @@ python3 scripts/gate_check.py \
   --target-version "${TARGET_VERSION}" \
   --tf-dir "${TF_DIR}" \
   --tf-var-file "${TF_VAR_FILE}" \
+  --auth-prefix "${AUTH_PREFIX}" \
   --audit-log audit.log
 ```
 
-(Omit `--tf-var-file` if `tf_var_file` is not in the recipe.)
+(Omit `--tf-var-file` / `--auth-prefix` if `tf_var_file` / `auth_prefix` is not in the recipe. Passing `--auth-prefix` lets INF-001/INF-004 run `terraform plan` under the correct auth — e.g. `aws-runas`.)
 
 Interpret the exit code per the convention table above.
 
@@ -581,13 +582,15 @@ After all component upgrades, run a full plan to catch remaining drift.
 ### 6-1. Full Plan and Apply
 
 ```bash
-cd "${TF_DIR}" && terraform plan 2>&1 | tail -40
+cd "${TF_DIR}" && ${AUTH_PREFIX} terraform plan -var-file="${TF_VAR_FILE}" 2>&1 | tail -40
 ```
+
+(Drop `${AUTH_PREFIX}` / `-var-file` if not in the recipe.)
 
 If non-destructive changes exist, apply:
 
 ```bash
-cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
+cd "${TF_DIR}" && ${AUTH_PREFIX} terraform apply -var-file="${TF_VAR_FILE}" -auto-approve 2>&1
 ```
 
 ### 6-2. Gate Verification
@@ -595,8 +598,12 @@ cd "${TF_DIR}" && terraform apply -auto-approve 2>&1
 ```bash
 python3 scripts/phase_gate.py phase6 \
   --tf-dir "${TF_DIR}" \
+  --auth-prefix "${AUTH_PREFIX}" \
+  --tf-var-file "${TF_VAR_FILE}" \
   --audit-log audit.log
 ```
+
+(Omit `--auth-prefix` / `--tf-var-file` if not in the recipe.) The gate runs `terraform plan`/`show` **inside** the script, so it cannot inherit a shell prefix — you MUST pass `--auth-prefix`/`--tf-var-file` here, or the plan fails (exit 1) and the gate wrongly FAILs. This is a real bug that caused false FAILs before these flags existed.
 
 Interpret exit code per convention table. The script uses `terraform show -json` for plan analysis (not text parsing). On PASS, proceed to Phase 7.
 
