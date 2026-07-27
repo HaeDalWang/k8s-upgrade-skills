@@ -29,7 +29,7 @@
   "k8s_breaks": {
     "1.22": {
       "change": "networking.k8s.io/v1beta1 Ingress 제거 — 구버전 차트의 Ingress 매니페스트가 깨짐",
-      "requires": "chart >= 4.0.0",
+      "requires_chart_min": "4.0.0",
       "severity": "CRITICAL"
     },
     "1.25": {

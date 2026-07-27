@@ -49,7 +49,8 @@ NC = "\033[0m"
 def fetch_releases_from_helm(timeout: int = 60):
     """helm ls -A -o json 실행. 실패 시 None (helm 미존재/오류와 빈 목록을 구분)."""
     try:
-        r = subprocess.run(["helm", "ls", "-A", "-o", "json"],
+        # --max 0 = 무제한 (기본 256개 제한으로 대형 클러스터 release 누락 방지)
+        r = subprocess.run(["helm", "ls", "-A", "--max", "0", "-o", "json"],
                            capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
         return None
@@ -85,8 +86,8 @@ def evaluate_release(entry: dict, release: dict, current: str, target: str,
     if lc is not None:
         findings.append(lc)
 
-    # k8s_breaks (점프 구간만)
-    findings.extend(compat_lib.fired_k8s_breaks(entry, current, target))
+    # k8s_breaks (점프 구간만 — requires_chart_min 충족 시 억제)
+    findings.extend(compat_lib.fired_k8s_breaks(entry, current, target, chart_ver))
 
     # 3축 + 횡단: CRD 수동 업글 경고
     crd = compat_lib.crd_warning(entry, chart_upgrade_needed)
@@ -177,6 +178,17 @@ def main() -> int:
                    help="helm ls 대신 주입할 release JSON 배열 (테스트/드라이런)")
     args = p.parse_args()
 
+    # 입력 검증 (시스템 경계 fail-fast) — 잘못된 버전은 traceback 대신 명확한 에러
+    for label, ver in (("--current", args.current), ("--target", args.target)):
+        if not compat_lib.is_valid_k8s_version(ver):
+            print(f"{RED}ERROR: {label} '{ver}'는 유효한 K8s 버전이 아닙니다 "
+                  f"(major.minor 형식 필요, 예: 1.33){NC}", file=sys.stderr)
+            return 2
+    if not compat_lib.k8s_gt(args.target, args.current):
+        print(f"{RED}ERROR: --target({args.target})은 --current({args.current})보다 "
+              f"높은 버전이어야 합니다 (다운그레이드/동일 버전 미지원){NC}", file=sys.stderr)
+        return 2
+
     today = args.today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Release 수집
@@ -215,7 +227,17 @@ def main() -> int:
                 f"수동 검토 필요 (kubeVersion·릴리스 노트 직접 확인)"))
             continue
 
-        for f in evaluate_release(entry, rel, args.current, args.target, today):
+        # 등록 차트라도 버전 문자열이 비정상(latest 등)이면 평가 중 크래시 가능 →
+        # 해당 release만 격리하고 나머지는 계속 검사 (WARN으로 수동 검토 유도)
+        try:
+            findings = evaluate_release(entry, rel, args.current, args.target, today)
+        except (ValueError, IndexError, KeyError) as e:
+            agg.add(compat_lib.Finding(
+                "HELM-UNKNOWN", "FAIL", "HIGH",
+                f"{ns}/{chart_name} ({chart_ref}): 버전 파싱 불가로 자동 평가 실패 — "
+                f"수동 검토 필요 ({e})"))
+            continue
+        for f in findings:
             agg.add(f)
 
     write_audit(args.audit_log, f"# Upgrade: {args.current} → {args.target}", agg)
