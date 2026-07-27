@@ -387,7 +387,7 @@ python3 scripts/service_watch.py --phase P4 --audit-log audit.log \
   --services-json '<SERVICES_JSON>'
 ```
 
-It polls each service's EndpointSlice ready count (vs `min_endpoints`) and HTTP `health_check_url` every 30s, recording `SVC-P4` entries to audit.log. A service without `health_check_url` is monitored EndpointSlice-only (BestEffort, logged once). Check output with BashOutput during the rolling update; a sustained `ready_endpoints < min` or health failure means a real-traffic impact — **STOP and investigate**.
+It polls each service's EndpointSlice ready count (vs `min_endpoints`) and HTTP `health_check_url` every 30s, recording `SVC-P4` entries to audit.log. A service without `health_check_url` is monitored EndpointSlice-only (BestEffort, logged once). On startup each service's existence is verified with `kubectl get svc`; a service **not found is logged WARN and excluded** from monitoring — so populate `services` from **live `kubectl get svc -n <ns>`, not just helm values** (helm values can list services that aren't actually deployed). Check output with BashOutput during the rolling update; a sustained `ready_endpoints < min` or health failure means a real-traffic impact — **STOP and investigate**.
 
 **Terminate after the Phase 4 gate passes**: KillShell, or use `--stop-file`.
 

@@ -115,12 +115,13 @@ class TestParseServices:
 # watch_loop (의존성 주입)
 # ══════════════════════════════════════════════════════════════
 class TestWatchLoop:
-    def _one_cycle(self, audit_log, services, endpoints_fn, health_fn=lambda url: True):
+    def _one_cycle(self, audit_log, services, endpoints_fn,
+                   health_fn=lambda url: True, exists_fn=lambda n, ns: True):
         clock_values = iter([0, 0, 1000])
         return service_watch.watch_loop(
             phase="P4", audit_log=str(audit_log), services=services,
             interval=1, max_duration=10,
-            endpoints_fn=endpoints_fn, health_fn=health_fn,
+            endpoints_fn=endpoints_fn, health_fn=health_fn, exists_fn=exists_fn,
             sleep_fn=lambda _s: None, clock=lambda: next(clock_values),
         )
 
@@ -182,9 +183,41 @@ class TestWatchLoop:
         rc = service_watch.watch_loop(
             phase="P5", audit_log=str(audit_log), services=services,
             interval=1, max_duration=3600,
-            endpoints_fn=ep, health_fn=lambda url: True,
+            endpoints_fn=ep, health_fn=lambda url: True, exists_fn=lambda n, ns: True,
             sleep_fn=lambda _s: None, clock=lambda: next(clock_values),
             stop_file=str(stop_file),
         )
         assert rc == 0
         assert called["n"] == 0
+
+    def test_missing_service_warns_and_excluded(self, tmp_path):
+        """존재하지 않는 서비스 → WARN 남기고 감시 대상에서 제외."""
+        audit_log = tmp_path / "audit.log"
+        services = [
+            {"name": "ghost", "namespace": "prod", "min_endpoints": 1, "health_check_url": ""},
+            {"name": "real", "namespace": "prod", "min_endpoints": 1, "health_check_url": ""},
+        ]
+        self._one_cycle(
+            audit_log, services,
+            endpoints_fn=lambda n, ns: 5,
+            exists_fn=lambda n, ns: n == "real",
+        )
+        content = audit_log.read_text(encoding="utf-8")
+        assert "ghost" in content and "Service 없음" in content
+        # 감시 대상은 real 1개만
+        assert "1 service(s)" in content
+
+    def test_missing_service_no_endpoint_spam(self, tmp_path):
+        """없는 서비스는 감시 제외 → ready=0 미달 WARN을 매 폴링마다 남기지 않음."""
+        audit_log = tmp_path / "audit.log"
+        services = [{"name": "ghost", "namespace": "prod", "min_endpoints": 2, "health_check_url": ""}]
+        calls = {"n": 0}
+
+        def ep(n, ns):
+            calls["n"] += 1
+            return 0
+
+        self._one_cycle(audit_log, services, endpoints_fn=ep, exists_fn=lambda n, ns: False)
+        content = audit_log.read_text(encoding="utf-8")
+        assert "ready_endpoints" not in content  # 미달 스팸 없음
+        assert calls["n"] == 0                    # 폴링 자체가 일어나지 않음
