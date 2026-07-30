@@ -49,6 +49,12 @@ python3 k8s-upgrade-skills/scripts/audit_event.py \
 # recipe 검증 (recipe.md 또는 recipe.yaml 모두 지원)
 python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.md
 
+# Helm 차트 호환성 점검 (독립 스킬 — 클러스터 없이 --releases-json 주입 가능)
+python3 helm-k8s-compat/scripts/helm_compat_check.py \
+  --current 1.33 --target 1.34 \
+  --registry-dir helm-k8s-compat/registry \
+  --audit-log audit.log
+
 # 스킬 설치 / 업데이트 / 상태 확인
 ./install.sh --tool claude
 ./install.sh --tool claude --force   # 재설치(업데이트)
@@ -81,12 +87,21 @@ k8s-upgrade-skills/          ← AI Agent가 읽는 스킬 디렉토리 (install
 │   ├── service_watch.py     ← 인라인 서비스 모니터 (EndpointSlice ready + HTTP health → SVC-P*)
 │   ├── audit_event.py       ← 단일 이벤트 audit.log 기록 CLI (lib.audit_append 래퍼)
 │   └── validate_recipe.py   ← recipe.md / recipe.yaml 스키마 검증
-├── agents/                  ← 인라인 전환 근거(rationale) 문서 (sub-agent 정의 아님, 호출 금지)
-│   ├── k8s-drain-monitor.md
-│   └── k8s-service-aware.md
+├── docs/
+│   └── inline-monitors.md   ← 인라인 모니터 설계 근거 + 감지 신호 레퍼런스 (sub-agent 정의 아님)
+├── schemas/
+│   └── recipe.schema.json   ← recipe.yaml IDE 스키마 (VSCode/Kiro)
 └── aws/terraform-eks/
     ├── SKILL.md             ← Phase 0~7 실행 절차 (EKS + Terraform 전용)
-    └── reference.md         ← 완료 보고서 템플릿, 중단 조건 목록
+    └── reference.md         ← 계획서·보고서 템플릿, 중단 조건 목록
+
+helm-k8s-compat/             ← 독립 스킬: Helm 차트 ↔ K8s 버전 호환성 사전 점검
+├── SKILL.md                 ← 워크플로우 (helm ls → registry 대조 → exit code)
+├── reference.md             ← 보고서 템플릿 + 조치 가이드
+├── scripts/
+│   ├── compat_lib.py        ← 순수 함수 (버전 파싱/범위 매칭/3축 평가)
+│   └── helm_compat_check.py ← CLI 엔트리포인트 (exit 0/1/2/127)
+└── registry/                ← De-facto 표준 차트 큐레이션 JSON (+ _schema.md)
 
 tests/
 ├── test_gate_check.py       ← gate_check.py 단위 테스트
@@ -94,7 +109,9 @@ tests/
 ├── test_drain_watch.py      ← drain_watch.py 단위 테스트
 ├── test_service_watch.py    ← service_watch.py 단위 테스트
 ├── test_audit_event.py      ← audit_event.py 단위 테스트
-└── test_validate_recipe.py  ← validate_recipe.py 단위 테스트
+├── test_validate_recipe.py  ← validate_recipe.py 단위 테스트
+├── test_helm_compat_check.py ← compat_lib.py 순수 함수 테스트
+└── test_helm_compat_e2e.py  ← helm_compat_check.py 통합 테스트 (CLI/exit code)
 
 docs/
 ├── required-permissions.md  ← IAM/RBAC 최소 권한 (Phase별 분리)
@@ -104,9 +121,14 @@ docs/
 ### 스크립트 간 의존 관계
 
 ```
-gate_check.py  ──imports──▶  lib.py
-phase_gate.py  ──imports──▶  lib.py
-validate_recipe.py            (stdlib only, 독립)
+gate_check.py    ──imports──▶  lib.py
+phase_gate.py    ──imports──▶  lib.py
+drain_watch.py   ──imports──▶  lib.py
+service_watch.py ──imports──▶  lib.py
+audit_event.py   ──imports──▶  lib.py
+validate_recipe.py              (stdlib only, 독립)
+
+helm_compat_check.py ──imports──▶ compat_lib.py   (별도 스킬, lib.py 미사용)
 ```
 
 `lib.py`의 핵심 함수:
@@ -119,7 +141,7 @@ validate_recipe.py            (stdlib only, 독립)
 `lib.py`의 주요 상수:
 - `SYSTEM_NS`: WLS-002/004/005/006 검증에서 제외되는 시스템 네임스페이스 집합 (`kube-system`, `karpenter` 등)
 - `DATA_PLANE_RESOURCES`: INF-004 recreate 감지 대상 Terraform 리소스 타입 (`aws_eks_node_group` 등)
-- `ADDON_BAD_STATES`: COM-003 비정상 Add-on 상태 (`DEGRADED`, `CREATE_FAILED`)
+- `ADDON_BAD_STATES`: COM-003 비정상 Add-on 상태 (`DEGRADED`, `CREATE_FAILED`, `UPDATE_FAILED`, `DELETE_FAILED`)
 
 ### gate_check.py 규칙 함수 구조
 
@@ -184,10 +206,9 @@ Python 3.9+ 지원. `dict | None` 타입 힌트 사용 불가 → `Optional[dict
 
 ## 새 규칙 추가 시 체크리스트
 
-## 새 규칙 추가 시 체크리스트
-
 1. `gate_check.py`에 `check_<ruleid>()` 함수 추가
 2. `main()`의 `ALL_RULES` 리스트에 순서에 맞게 삽입
 3. `lib.py`의 상수(`SYSTEM_NS`, `DATA_PLANE_RESOURCES` 등) 재사용 여부 확인
 4. `tests/test_gate_check.py`에 대응 테스트 클래스 추가 (`reset_gate()` fixture 자동 적용됨)
 5. `docs/required-permissions.md`에 필요 권한 추가
+6. README·`aws/terraform-eks/SKILL.md`의 규칙 개수와 목록 갱신 (현재 18개)

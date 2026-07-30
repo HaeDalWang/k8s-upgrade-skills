@@ -3,7 +3,7 @@
 service_watch.py — 서비스 가용성 인라인 백그라운드 모니터
 
 ⚠️ Sub-Agent가 아니다. 메인 에이전트가 `run_in_background: true`로 띄우는
-   결정적 폴링 스크립트다. (이유는 drain_watch.py / k8s-drain-monitor.md 참조 —
+   결정적 폴링 스크립트다. (이유는 drain_watch.py / docs/inline-monitors.md 참조 —
    동기 호출-반환 Agent 모델로는 "감시 중 즉시 보고"가 불가능.)
 
 recipe의 `services`에 정의된 각 서비스에 대해 30초마다:

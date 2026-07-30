@@ -9,8 +9,8 @@ target_version: "1.35"    # 따옴표 필수. current_version의 차기 마이�
 
 # ── 선택 필드 ──────────────────────────────────────────────
 output_language: ko       # ko | en (기본: ko) — 계획서·보고서 출력 언어
-# auth_prefix: "aws-runas ezl-switch"   # terraform/aws 명령 프리픽스 (MFA assume-role 등). 없으면 생략
-# tf_var_file: "ezl-dev.tfvars"         # terraform var-file (workspace별 tfvars). 없으면 생략
+# auth_prefix: "aws-runas my-profile"   # terraform/aws 명령 프리픽스 (MFA assume-role 등). 없으면 생략
+# tf_var_file: "dev.tfvars"         # terraform var-file (workspace별 tfvars). 없으면 생략
 
 # ── 서비스 가용성 모니터링 (선택) ──────────────────────────
 # 없으면 인라인 서비스 모니터(service_watch.py)가 투입되지 않습니다.
@@ -33,37 +33,37 @@ services:
 
 <!--
   recipe.md — EKS 업그레이드 요구사항 파일
-  
+
   이 파일을 EKS 프로젝트 루트에 배치하세요.
   AI Agent가 이 파일을 읽고 업그레이드를 진행합니다.
-  
+
   검증: python3 k8s-upgrade-skills/scripts/validate_recipe.py recipe.md
-  
+
   ─────────────────────────────────────────────────────────────
   파일 구조
   ─────────────────────────────────────────────────────────────
-  
+
   이 파일은 두 부분으로 구성됩니다:
-  
+
   1. frontmatter (--- 사이): 스크립트가 검증하는 구조화 필드
      - 버전 건너뛰기 방지, 플랫폼 라우팅 등 안전 검증에 사용
      - 반드시 정해진 형식을 지켜야 합니다
-  
+
   2. body (--- 아래 이 섹션): LLM이 읽는 자유 형식 컨텍스트
      - 현재 상황, 제약사항, 특이사항을 자유롭게 서술
      - 포맷 제약 없음 — 마크다운, 불릿, 자유 문장 모두 가능
      - AI Agent가 이 내용을 해석해 업그레이드 계획서에 반영합니다
-  
+
   ─────────────────────────────────────────────────────────────
   컨텍스트 작성 예시
   ─────────────────────────────────────────────────────────────
-  
+
   - "my-api ↔ payment-service 간 간헐적 통신 실패 발생 중 (원인 조사 중)"
   - "유지보수 윈도우: 새벽 02:00~04:00 KST"
   - "zero downtime 필수 — 서비스 중단 허용 불가"
   - "PDB 임시 완화 가능 (팀장 승인 완료)"
   - "Karpenter spot 비율 높음 — 노드 교체 시 지연 가능성 있음"
-  
+
   특이사항이 없으면 아래 내용을 비워두거나 삭제해도 됩니다.
 -->
 

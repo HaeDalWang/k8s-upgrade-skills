@@ -38,7 +38,7 @@ EKS 업그레이드처럼 **고위험·다단계·장기 체공** 작업은 운�
 - recipe 스키마 검증 (`scripts/validate_recipe.py`) — 파싱 실패를 사전 차단
 - **인라인 드레인 모니터** (`scripts/drain_watch.py`): terraform apply와 동시에 메인 에이전트가 백그라운드로 실행. Warning 이벤트 / PDB 차단 / NodeClaim 상태를 30초 주기로 폴링해 드레인 위험을 `DRAIN-P*`로 audit.log에 기록
 - **인라인 서비스 모니터** (`scripts/service_watch.py`): 노드 교체 중 EndpointSlice ready 수 + HTTP 헬스체크로 서비스 가용성 감시 (BestEffort). `recipe`에 `services`가 있을 때만 투입
-  - > 별도 Sub-Agent가 아닌 **메인 에이전트의 백그라운드 폴링**으로 동작합니다. Claude Code 에이전트는 동기 호출-반환 모델이라 "감시 중 즉시 STOP 신호"를 보낼 수 없어, 결정적 폴링 스크립트로 구현했습니다. (근거: `agents/k8s-drain-monitor.md`)
+  - > 별도 Sub-Agent가 아닌 **메인 에이전트의 백그라운드 폴링**으로 동작합니다. Claude Code 에이전트는 동기 호출-반환 모델이라 "감시 중 즉시 STOP 신호"를 보낼 수 없어, 결정적 폴링 스크립트로 구현했습니다. (근거: `k8s-upgrade-skills/docs/inline-monitors.md`)
 
 ## 해당 스킬이 하지 않는 것
 
@@ -74,7 +74,7 @@ De-facto 표준 차트(ingress-nginx, cert-manager, cluster-autoscaler, aws-load
 
 판정은 `helm_compat_check.py`의 exit code(0/1/2/127)로 결정되며, 기존 스킬과 동일한 신뢰 모델을 따릅니다. 자세한 내용은 [QnA.md](QnA.md)의 "Helm 차트 호환성" 항목을 참고하세요.
 
-> **한계**: registry는 표준 차트를 깊게 큐레이션한 것으로 모든 차트를 망라하지 않습니다. 미등록 차트는 `kubeVersion` best-effort + "수동 검토 필요"로 보고하며 조용히 통과시키지 않습니다. EKS Insights·kubent(API 스캔)와는 **상호 보완** 관계입니다.
+> **한계**: registry는 표준 차트를 깊게 큐레이션한 것으로 모든 차트를 망라하지 않습니다. 미등록 차트는 자동 평가 대상이 아니며 **"수동 검토 필요"(INFO)로 보고**하고 조용히 통과시키지 않습니다. EKS Insights·kubent(API 스캔)와는 **상호 보완** 관계입니다.
 
 ## 로드맵
 
@@ -122,14 +122,12 @@ cd k8s-upgrade-skills
 
 | 도구 | 전역 설치 경로 |
 |------|---------------|
-| Claude Code | `~/.claude/skills/k8s-upgrade-skills/` |
-| Kiro | `~/.kiro/skills/k8s-upgrade-skills/` |
-| Cursor | `~/.cursor/skills/k8s-upgrade-skills/` |
-| Windsurf | `~/.windsurf/skills/k8s-upgrade-skills/` |
-| Gemini CLI | `~/.gemini/skills/k8s-upgrade-skills/` |
-| OpenCode | `~/.agents/skills/k8s-upgrade-skills/` |
-| Antigravity | `~/.agent/skills/k8s-upgrade-skills/` |
-| GitHub Copilot | `~/.github/skills/k8s-upgrade-skills/` |
+| Claude Code | `~/.claude/skills/` |
+| Kiro | `~/.kiro/skills/` |
+| Cursor | `~/.cursor/skills/` |
+| Antigravity | `~/.agent/skills/` |
+
+두 스킬 디렉토리(`k8s-upgrade-skills/`, `helm-k8s-compat/`)가 위 경로 아래에 각각 복사됩니다.
 
 ### recipe.md 작성
 
@@ -148,8 +146,8 @@ target_version: "1.35"    # 목표 버전 (따옴표 필수) — 반드시 curre
 
 # 선택 항목
 output_language: ko       # ko | en
-auth_prefix: ""           # terraform/aws 명령 프리픽스 (예: "aws-runas ezl-switch"). MFA assume-role 등
-tf_var_file: ""           # terraform var-file (예: "ezl-dev.tfvars"). workspace별 tfvars 사용 시
+auth_prefix: ""           # terraform/aws 명령 프리픽스 (예: "aws-runas my-profile"). MFA assume-role 등
+tf_var_file: ""           # terraform var-file (예: "dev.tfvars"). workspace별 tfvars 사용 시
 
 # 서비스 가용성 모니터링 (선택) — 없으면 인라인 service_watch SKIP
 services:
@@ -228,7 +226,7 @@ services:
 
 ```mermaid
 graph TD
-    A[recipe.yaml 읽기 및 검증] --> B0["Phase 0: 사전 검증 (gate_check.py — 18개 규칙)"]
+    A[recipe.md 읽기 및 검증] --> B0["Phase 0: 사전 검증 (gate_check.py — 18개 규칙)"]
     B0 -- "exit 0: Gate OPEN" --> C[Phase 1: IaC 변수 업데이트]
     B0 -- "exit 1: Gate BLOCKED" --> STOP[즉시 중단 — audit.log 확인 후 해결]
     B0 -- "exit 2: Gate WARN" --> USER_CONFIRM{사용자 확인}
@@ -269,18 +267,17 @@ graph TD
 │   │   ├── lib.py                      #     공통 헬퍼 (_gate 단일 진실 원천, audit 함수)
 │   │   ├── gate_check.py               #     Phase 0 독립 검증 (exit code로 Gate 제어)
 │   │   ├── phase_gate.py               #     Phase 2~7 Gate 검증 (exit code로 Gate 제어)
-│   │   ├── validate_recipe.py          #     recipe.yaml 스키마 검증 (services 필드 포함)
+│   │   ├── validate_recipe.py          #     recipe.md / recipe.yaml 스키마 검증 (services 포함)
 │   │   ├── drain_watch.py              #     인라인 드레인 모니터 (백그라운드 폴링, DRAIN-P*)
 │   │   ├── service_watch.py            #     인라인 서비스 모니터 (EndpointSlice+HTTP, SVC-P*)
 │   │   └── audit_event.py              #     단일 이벤트 audit.log 기록 CLI (lib.audit_append 래퍼)
-│   ├── agents/
-│   │   ├── k8s-drain-monitor.md        #     드레인 모니터 — 인라인 전환 근거(rationale) 문서
-│   │   └── k8s-service-aware.md        #     서비스 모니터 — 인라인 전환 근거(rationale) 문서
+│   ├── docs/
+│   │   └── inline-monitors.md          #     인라인 모니터 설계 근거 + 감지 신호 레퍼런스
 │   ├── schemas/
 │   │   └── recipe.schema.json          #     recipe.yaml IDE 스키마 (VSCode/Kiro)
 │   └── aws/terraform-eks/
 │       ├── SKILL.md                    #     Phase 0~7 실행 절차 + 인라인 모니터 실행 지시
-│       └── reference.md               #     보고서 템플릿, 중단 조건
+│       └── reference.md                #     계획서·보고서 템플릿, 중단 조건
 ├── helm-k8s-compat/                    # AI Agent 스킬 정의 (Helm 호환성 사전 점검 — 독립 트리거)
 │   ├── SKILL.md                        #   워크플로우 (helm ls → registry 대조 → exit code)
 │   ├── reference.md                    #   보고서 템플릿(한/영) + 조치 가이드
@@ -298,8 +295,8 @@ graph TD
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (모니터 이벤트 해석 포함)
 ├── example/terraform-eks/              # EKS + Karpenter 참조 Terraform 코드
-│   ├── recipe.md                      #   업그레이드 요구사항 예제 (services 필드 포함)
 │   └── terraform/                     #   eks.tf, network.tf, yamls/ 등
+│       └── recipe.md                  #     업그레이드 요구사항 예제 (services 필드 포함)
 ├── tests/
 │   ├── test_gate_check.py             #   gate_check.py 단위 테스트
 │   ├── test_phase_gate.py             #   phase_gate.py 단위 테스트

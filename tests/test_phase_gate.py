@@ -206,11 +206,11 @@ class TestPhase6Args:
         parser = _build_parser()
         args = parser.parse_args([
             "phase6", "--tf-dir", "/tmp",
-            "--auth-prefix", "aws-runas ezl-switch",
-            "--tf-var-file", "ezl-prod.tfvars",
+            "--auth-prefix", "aws-runas my-profile",
+            "--tf-var-file", "prod.tfvars",
         ])
-        assert args.auth_prefix == "aws-runas ezl-switch"
-        assert args.tf_var_file == "ezl-prod.tfvars"
+        assert args.auth_prefix == "aws-runas my-profile"
+        assert args.tf_var_file == "prod.tfvars"
 
 
 class TestPhase7Args:
@@ -2504,7 +2504,7 @@ class TestGatePhase6:
 class TestGatePhase6Auth:
     """gate_phase6 — auth_prefix / tf_var_file 반영 검증.
 
-    ezl처럼 terraform 실행에 `aws-runas <profile>` 프리픽스 + workspace별 `-var-file`이
+    MFA assume-role 환경처럼 terraform 실행에 `aws-runas <profile>` 프리픽스 + workspace별 `-var-file`이
     필수인 환경에서, 게이트가 이 값들을 실제 terraform 명령에 반영하는지 확인한다.
     (미반영 시 4/4 홉 false FAIL 발생한 실전 결함의 회귀 방지)
     """
@@ -2543,22 +2543,22 @@ class TestGatePhase6Auth:
     def test_auth_prefix_prepended_to_plan(self, tmp_path):
         """auth_prefix가 shlex 분리되어 terraform plan 앞에 붙는다."""
         rc, calls = self._run(
-            tmp_path, auth_prefix="aws-runas ezl-switch", tf_var_file="ezl-prod.tfvars")
+            tmp_path, auth_prefix="aws-runas my-profile", tf_var_file="prod.tfvars")
         assert rc == 0
         plan_cmd = next(c for c in calls if "plan" in c)
-        assert plan_cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+        assert plan_cmd[:3] == ["aws-runas", "my-profile", "terraform"]
 
     def test_var_file_appended_to_plan(self, tmp_path):
         """tf_var_file이 -var-file= 인자로 plan에 반영된다."""
-        rc, calls = self._run(tmp_path, tf_var_file="ezl-prod.tfvars")
+        rc, calls = self._run(tmp_path, tf_var_file="prod.tfvars")
         plan_cmd = next(c for c in calls if "plan" in c)
-        assert "-var-file=ezl-prod.tfvars" in plan_cmd
+        assert "-var-file=prod.tfvars" in plan_cmd
 
     def test_auth_prefix_prepended_to_show(self, tmp_path):
         """auth_prefix는 terraform show에도 붙는다 (backend state 접근 대비)."""
-        rc, calls = self._run(tmp_path, auth_prefix="aws-runas ezl-switch")
+        rc, calls = self._run(tmp_path, auth_prefix="aws-runas my-profile")
         show_cmd = next(c for c in calls if "show" in c)
-        assert show_cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
+        assert show_cmd[:3] == ["aws-runas", "my-profile", "terraform"]
 
     def test_no_auth_prefix_keeps_bare_terraform(self, tmp_path):
         """auth_prefix 미제공 시 기존 동작 유지 — terraform이 맨 앞."""
@@ -2992,13 +2992,13 @@ class TestAuditLogAppend:
         importlib.reload(lib)
         audit_path = str(tmp_path / "audit.log")
         lib.reset_gate()
-        lib.audit_init("ezl-dev", "", "1.34")
+        lib.audit_init("dev-cluster", "", "1.34")
         lib.audit_write("PHASE2-CP", "PASS", "ok")
         lib.audit_flush(audit_path)
         content = open(audit_path, encoding="utf-8").read()
         assert "Upgrade:  →" not in content, "빈 current_version으로 헤더가 오염됨"
         assert "# Target version: 1.34" in content
-        assert "# Cluster: ezl-dev" in content
+        assert "# Cluster: dev-cluster" in content
 
     def test_audit_init_all_empty_graceful(self, tmp_path):
         """phase3/6처럼 cluster/version 모두 빈 경우에도 헤더가 깨지지 않아야 함."""

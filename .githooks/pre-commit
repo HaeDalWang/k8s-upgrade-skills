@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 이 레포는 개인 소유 프로젝트이므로 커밋 작성자 이메일이 회사 이메일로
+# 찍히는 걸 막는다. 우회하려면 --no-verify를 명시적으로 써야 한다.
+set -euo pipefail
+
+ALLOWED_EMAIL="svvwac98@gmail.com"
+CURRENT_EMAIL="$(git config user.email || true)"
+
+if [ "$CURRENT_EMAIL" != "$ALLOWED_EMAIL" ]; then
+  echo "커밋 차단: git user.email이 '${CURRENT_EMAIL}'입니다 (허용: ${ALLOWED_EMAIL})" >&2
+  echo "  git config user.email ${ALLOWED_EMAIL}" >&2
+  exit 1
+fi

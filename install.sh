@@ -53,12 +53,20 @@ get_base() {
   esac
 }
 
-# Agent install path (claude only for now)
-get_agent_path() {
-  case "$1" in
-    claude) echo "$HOME/.claude/agents" ;;
-    *) echo "" ;;
-  esac
+# 이전 버전이 ~/.claude/agents/ 에 설치했던 파일들.
+# 지금은 인라인 모니터로 전환해 sub-agent 정의가 없으므로, 남아 있으면 정리한다.
+LEGACY_AGENTS="k8s-drain-monitor.md k8s-service-aware.md"
+
+# 이전 버전 잔여 agent 정의 제거 (호출 금지 문서가 에이전트로 노출되는 것 방지)
+clean_legacy_agents() {
+  local agent_dir="$HOME/.claude/agents"
+  [[ -d "$agent_dir" ]] || return 0
+  for f in $LEGACY_AGENTS; do
+    if [[ -f "$agent_dir/$f" ]]; then
+      rm -f "$agent_dir/$f"
+      echo "  [CLEAN] removed legacy agent: ~/.claude/agents/$f"
+    fi
+  done
 }
 
 ALL_TOOLS="claude kiro cursor antigravity"
@@ -114,6 +122,7 @@ if [[ "$ACTION" = "uninstall" ]]; then
       fi
     done
   done
+  clean_legacy_agents
   echo ""
   [[ $removed -eq 0 ]] && echo "Nothing to remove." || echo "Removed $removed item(s)."
   exit 0
@@ -202,21 +211,14 @@ for t in $SELECTED; do
       fi
     fi
     cp -r "$src" "$dest"
+    # 개발 중 생성된 Python 캐시·OS 메타파일은 설치본에 필요 없다
+    find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$dest" \( -name '*.pyc' -o -name '.DS_Store' \) -delete 2>/dev/null || true
     echo "  [OK]   $t -> ${dest/#$HOME/~}"
-
-    # Install agent definitions (claude only, skill이 agents/를 가질 때만)
-    agent_dest=$(get_agent_path "$t")
-    agent_src="$src/agents"
-    if [[ -n "$agent_dest" && -d "$agent_src" ]]; then
-      mkdir -p "$agent_dest"
-      for agent_file in "$agent_src"/*.md; do
-        [[ -f "$agent_file" ]] || continue
-        cp "$agent_file" "$agent_dest/"
-        echo "  [OK]   $t agent: ${agent_dest/#$HOME/~}/$(basename "$agent_file")"
-      done
-    fi
   done
 done
+
+clean_legacy_agents
 
 echo ""
 echo "Done! Skills installed:"

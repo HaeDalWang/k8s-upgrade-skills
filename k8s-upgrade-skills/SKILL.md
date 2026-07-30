@@ -11,7 +11,10 @@ description: >
 # Kubernetes Version Upgrade — Root Router
 
 This skill upgrades Kubernetes clusters across multiple infrastructure types with zero-downtime and workload protection.
-It collects upgrade requirements (from `recipe.yaml` if present, or interactively from the user), validates them, and routes to exactly ONE platform-specific sub-skill.
+It collects upgrade requirements (from `recipe.md` if present, or interactively from the user), validates them, and routes to exactly ONE platform-specific sub-skill.
+
+All scripts referenced as `scripts/<name>.py` live in the **skill root directory** (this file's
+directory). Resolve them relative to that root, not to the user's working directory.
 
 ---
 
@@ -46,10 +49,16 @@ Ask the user for the following fields **in a single message** (do not ask one by
 
 선택 항목:
 - output_language : ko / en (기본: ko)
+- auth_prefix  : terraform/aws 실행에 프리픽스가 필요하면 알려주세요 (예: "aws-runas my-profile"). 없으면 생략
+- tf_var_file  : terraform이 var-file을 요구하면 알려주세요 (예: "dev.tfvars"). 없으면 생략
 - 현재 상황이나 제약사항이 있으면 자유롭게 알려주세요 (없으면 생략)
 ```
 
-Once the user provides all required fields, generate `recipe.md` in the current working directory:
+`auth_prefix` / `tf_var_file` are optional but **ask for them explicitly** — omitting them when the
+environment needs them makes the Phase 6 gate fail on auth/variable errors instead of real problems.
+
+Once the user provides all required fields, generate `recipe.md` in the current working directory
+(include the optional keys only if the user supplied them):
 
 ```markdown
 ---
@@ -104,7 +113,14 @@ If validation fails (exit code 1), report the specific error and do NOT proceed.
 | Field | Default | Purpose |
 |---|---|---|
 | `output_language` | `ko` | Final report language. `ko` = Korean, `en` = English |
-| `notes` | (empty) | User-provided special instructions or constraints |
+| `notes` | (empty) | User-provided special instructions or constraints (`recipe.yaml`; in `recipe.md` use the body instead) |
+| `auth_prefix` | (empty) | Command prefix for every `terraform`/`aws` call, e.g. `aws-runas my-profile` for MFA assume-role setups |
+| `tf_var_file` | (empty) | `-var-file` passed to terraform, e.g. `dev.tfvars` for workspace-specific tfvars |
+| `services` | (absent) | Services to watch during node replacement. Each entry: `name`, `namespace`, `min_endpoints`, optional `health_check_url`. Absent → inline `service_watch` is skipped |
+
+> **`auth_prefix` / `tf_var_file` matter for gate correctness.** The Phase 6 gate runs `terraform`
+> *inside* the script, so it cannot inherit a shell prefix. If the environment needs either and the
+> recipe omits it, Phase 6 fails on an auth/variable error rather than on a real problem.
 
 ---
 

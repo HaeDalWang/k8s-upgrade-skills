@@ -595,9 +595,9 @@ def gate_phase5(target_version: str, audit_log: str) -> int:
 
 
 def _wrap_auth(cmd: list, auth_prefix: str) -> list:
-    """auth_prefix(예: 'aws-runas ezl-switch')를 명령 앞에 붙인다.
+    """auth_prefix(예: 'aws-runas my-profile')를 명령 앞에 붙인다.
 
-    ezl처럼 terraform 실행에 MFA 세션(aws-runas 등) 프리픽스가 필요한 환경을
+    MFA assume-role 환경처럼 terraform 실행에 MFA 세션(aws-runas 등) 프리픽스가 필요한 환경을
     지원한다. 빈 문자열이면 원본 명령을 그대로 반환한다.
     """
     import shlex
@@ -609,8 +609,8 @@ def _wrap_auth(cmd: list, auth_prefix: str) -> list:
 def gate_phase6(tf_dir: str, audit_log: str, auth_prefix: str = "", tf_var_file: str = "") -> int:
     """Phase 6: Terraform plan JSON 분석. 반환: exit code (0/1).
 
-    auth_prefix: terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch').
-    tf_var_file: terraform plan에 전달할 var-file (예: 'ezl-prod.tfvars').
+    auth_prefix: terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas my-profile').
+    tf_var_file: terraform plan에 전달할 var-file (예: 'prod.tfvars').
     둘 다 recipe에서 전달받아 반영한다. 미제공 시 기존 동작 유지.
     """
     reset_gate()
@@ -845,9 +845,9 @@ def main() -> None:
     p6.add_argument("--tf-dir", required=True)
     p6.add_argument("--audit-log", default="audit.log")
     p6.add_argument("--auth-prefix", default="",
-                    help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch'). recipe의 auth_prefix")
+                    help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas my-profile'). recipe의 auth_prefix")
     p6.add_argument("--tf-var-file", default="",
-                    help="terraform plan에 전달할 var-file (예: ezl-prod.tfvars). recipe의 tf_var_file")
+                    help="terraform plan에 전달할 var-file (예: prod.tfvars). recipe의 tf_var_file")
 
     # ── phase7: Final Validation 검증 ──
     p7 = subparsers.add_parser("phase7", help="Phase 7: Final Validation 검증")

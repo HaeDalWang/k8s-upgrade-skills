@@ -210,12 +210,12 @@ class TestAuthAndTfVarFile:
     """auth_prefix / tf_var_file 선택 필드 (인증·terraform 컨텍스트)."""
 
     def test_auth_prefix_and_tf_var_file_parsed_and_valid(self, tmp_path):
-        content = VALID_BASE + 'auth_prefix: aws-runas ezl-switch\ntf_var_file: ezl-dev.tfvars\n'
+        content = VALID_BASE + 'auth_prefix: aws-runas my-profile\ntf_var_file: dev.tfvars\n'
         path = _write_recipe(tmp_path, content)
         recipe = validate_recipe.load_recipe(path)
         # 공백/하이픈 포함 값도 그대로 파싱
-        assert recipe["auth_prefix"] == "aws-runas ezl-switch"
-        assert recipe["tf_var_file"] == "ezl-dev.tfvars"
+        assert recipe["auth_prefix"] == "aws-runas my-profile"
+        assert recipe["tf_var_file"] == "dev.tfvars"
         assert validate_recipe.validate(recipe) == []
 
     def test_recipe_without_auth_fields_still_valid(self, tmp_path):

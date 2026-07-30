@@ -31,7 +31,7 @@ Fill every `{PLACEHOLDER}` from recipe.yaml. Do NOT invent data.
 
 | Phase | 작업 내용 | Gate 조건 | 비고 |
 |-------|---------|---------|------|
-| Phase 0 | 사전 검증 (17개 규칙) | gate_check.py exit 0 | CRITICAL FAIL 시 즉시 중단 |
+| Phase 0 | 사전 검증 (18개 규칙) | gate_check.py exit 0 | CRITICAL FAIL 시 즉시 중단 |
 | Phase 1 | terraform.tfvars 버전 업데이트 | 변경값 grep 확인 | CP 버전만 수정, AMI는 Phase 4에서 처리 |
 | Phase 2 | Control Plane 업그레이드 | CP status=ACTIVE + 목표 버전 | 비가역적 작업. 소요 시간 편차 큼 (참고값: 8~40분) |
 | Phase 3 | Add-on 안정화 검증 | 전체 Add-on ACTIVE | CP 업그레이드 후 자동 재조정 대기 |
@@ -110,7 +110,7 @@ services 필드 없을 때:
 
 | Phase | Action | Gate Condition | Notes |
 |-------|--------|---------------|-------|
-| Phase 0 | Pre-flight validation (17 rules) | gate_check.py exit 0 | CRITICAL FAIL → immediate stop |
+| Phase 0 | Pre-flight validation (18 rules) | gate_check.py exit 0 | CRITICAL FAIL → immediate stop |
 | Phase 1 | Update terraform.tfvars version | grep verification | CP version only; AMI deferred to Phase 4 |
 | Phase 2 | Control Plane upgrade | CP status=ACTIVE + target version | Irreversible. Duration varies (ref: 8–40 min) |
 | Phase 3 | Add-on stabilization | All add-ons ACTIVE | Wait for reconciliation after CP upgrade |

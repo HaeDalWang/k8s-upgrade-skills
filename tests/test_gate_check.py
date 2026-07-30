@@ -232,7 +232,7 @@ class TestTerraformPlanTimeout300:
 class TestTerraformPlanAuthPrefix:
     """run_terraform_plan — auth_prefix / var_file 반영 확인.
 
-    ezl aws-runas + workspace var-file 구조에서 INF-001/INF-004가 실제 인증 하에
+    aws-runas + workspace var-file 구조에서 INF-001/INF-004가 실제 인증 하에
     작동하도록, 명령이 올바르게 조립되는지 검증한다.
     """
 
@@ -244,10 +244,10 @@ class TestTerraformPlanAuthPrefix:
         with unittest.mock.patch('subprocess.run') as mock_run:
             mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
             gate_check.run_terraform_plan(
-                "/tmp/tf", var_file="ezl-prod.tfvars", auth_prefix="aws-runas ezl-switch")
+                "/tmp/tf", var_file="prod.tfvars", auth_prefix="aws-runas my-profile")
         cmd = self._cmd_of(mock_run)
-        assert cmd[:3] == ["aws-runas", "ezl-switch", "terraform"]
-        assert "-var-file=ezl-prod.tfvars" in cmd
+        assert cmd[:3] == ["aws-runas", "my-profile", "terraform"]
+        assert "-var-file=prod.tfvars" in cmd
 
     def test_no_auth_prefix_keeps_bare_terraform(self):
         with unittest.mock.patch('subprocess.run') as mock_run:

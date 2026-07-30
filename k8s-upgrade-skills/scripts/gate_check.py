@@ -981,7 +981,7 @@ def run_terraform_plan(tf_dir: str, var_file: str = None, auth_prefix: str = "")
     """terraform plan -detailed-exitcode -no-color 실행. 반환: (exit_code, output).
 
     var_file이 주어지면 `-var-file=<var_file>`을 추가한다 (workspace별 tfvars 등).
-    auth_prefix가 주어지면 terraform 실행 앞에 붙인다 (예: 'aws-runas ezl-switch').
+    auth_prefix가 주어지면 terraform 실행 앞에 붙인다 (예: 'aws-runas my-profile').
     aws-runas 같은 MFA 세션 프리픽스가 없으면 인증 실패로 exit 1이 나는데,
     INF-001은 이를 정보성(INFO)으로만 보고하고 게이트를 막지 않는다.
     """
@@ -1142,9 +1142,9 @@ def main() -> None:
     parser.add_argument("--tf-dir", default=None,
                         help="Terraform 구성 디렉토리 (INF-001/INF-004에 필요)")
     parser.add_argument("--tf-var-file", default=None,
-                        help="terraform plan에 전달할 var-file (예: ezl-dev.tfvars). recipe의 tf_var_file")
+                        help="terraform plan에 전달할 var-file (예: dev.tfvars). recipe의 tf_var_file")
     parser.add_argument("--auth-prefix", default="",
-                        help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas ezl-switch'). recipe의 auth_prefix")
+                        help="terraform 실행 앞에 붙일 인증 프리픽스 (예: 'aws-runas my-profile'). recipe의 auth_prefix")
     args = parser.parse_args()
 
     # 의존성 확인

@@ -29,8 +29,8 @@ OPTIONAL_FIELDS = {
     "output_language": {"type": str, "allowed": ["ko", "en"], "default": "ko"},
     "notes":           {"type": str, "default": ""},
     # 인증/terraform 컨텍스트 — LLM 즉석 탐색을 줄이기 위해 recipe에 명시
-    "auth_prefix":     {"type": str, "default": ""},   # 예: "aws-runas ezl-switch"
-    "tf_var_file":     {"type": str, "default": ""},   # 예: "ezl-dev.tfvars"
+    "auth_prefix":     {"type": str, "default": ""},   # 예: "aws-runas my-profile"
+    "tf_var_file":     {"type": str, "default": ""},   # 예: "dev.tfvars"
 }
 
 # services 항목 스키마

@@ -27,17 +27,17 @@ Recipe values are already validated by the root skill router. Read these values 
 | `TARGET_VERSION` | `target_version` | Upgrade target |
 | `TF_DIR` | (auto-discover) | Directory containing `terraform.tfvars` or `*.tf` files |
 | `EKS_MODULE` | (auto-discover) | Terraform module name for EKS (e.g. `module.eks`) |
-| `AUTH_PREFIX` | `auth_prefix` (optional) | Command prefix for terraform/aws (e.g. `aws-runas ezl-switch`). Empty if absent |
-| `TF_VAR_FILE` | `tf_var_file` (optional) | `-var-file`/`--var-file` for terraform (e.g. `ezl-dev.tfvars`). Empty if absent |
+| `AUTH_PREFIX` | `auth_prefix` (optional) | Command prefix for terraform/aws (e.g. `aws-runas my-profile`). Empty if absent |
+| `TF_VAR_FILE` | `tf_var_file` (optional) | `-var-file`/`--var-file` for terraform (e.g. `dev.tfvars`). Empty if absent |
 
 > **Version constraint**: Only minor +1 upgrades are supported. 1.33 → 1.35 is rejected.
 
 ### Authentication Rule (read before any command)
 
-If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` command with it** (e.g. `aws-runas ezl-switch terraform plan ...`). `kubectl` uses the active kubeconfig context.
+If `auth_prefix` is set in the recipe, **prefix every `terraform` and `aws` command with it** (e.g. `aws-runas my-profile terraform plan ...`). `kubectl` uses the active kubeconfig context.
 
 - **terraform** plans/applies: use `--var-file="${TF_VAR_FILE}"` when `tf_var_file` is set (workspace-specific tfvars).
-- **MFA sessions expire** (often 1h). A long Control Plane upgrade can outlast the session. Before starting, refresh the session once (e.g. `aws-runas ezl-switch aws sts get-caller-identity`); if a poll fails mid-upgrade with an auth error, re-authenticate and continue — the upgrade itself is unaffected.
+- **MFA sessions expire** (often 1h). A long Control Plane upgrade can outlast the session. Before starting, refresh the session once (e.g. `aws-runas my-profile aws sts get-caller-identity`); if a poll fails mid-upgrade with an auth error, re-authenticate and continue — the upgrade itself is unaffected.
 - The gate scripts (`gate_check.py`, `phase_gate.py`) call `kubectl`/`aws` directly and inherit the shell's `AWS_PROFILE`/kubeconfig. For `terraform`, pass the recipe `auth_prefix` via **`--auth-prefix`** (Phase 0 `gate_check.py`, Phase 6 `phase_gate.py phase6`) so the script runs `terraform` under the correct auth (e.g. `aws-runas`). Without it, `INF-001` may be unable to run `terraform plan` — that is **info-only** (see Phase 0) and does not block the gate — but the **Phase 6** gate does block, so `--auth-prefix`/`--tf-var-file` there are required for auth-prefixed environments.
 
 ---
@@ -216,7 +216,7 @@ Review the plan output:
 - Any `-/+` (destroy-recreate) that is NOT `time_sleep` → **STOP and ask user**
 
 > **If `aws_eks_node_group` appears in the plan (version change):** MNG rolling will start alongside CP upgrade.
-> You MUST launch the drain monitor sub-agent (step 2-2) BEFORE running terraform apply.
+> You MUST launch the drain monitor (step 2-2) BEFORE running terraform apply.
 
 ### 2-2. Start Drain Monitor (inline background)
 
@@ -224,7 +224,7 @@ Review the plan output:
 > Do NOT run `terraform apply` until the monitor is active.
 > This applies even if `aws_eks_node_group` does NOT appear in the plan — CP upgrade can still cause transient node events.
 >
-> **Why inline, not a sub-agent**: Claude Code agents are synchronous call-return — a sub-agent cannot stream a "STOP now" signal mid-watch, and its Bash runs under a separate permission boundary. The monitor therefore runs as a deterministic polling script that the **main agent** launches in the background. Rationale: `agents/k8s-drain-monitor.md`.
+> **Why inline, not a sub-agent**: Claude Code agents are synchronous call-return — a sub-agent cannot stream a "STOP now" signal mid-watch, and its Bash runs under a separate permission boundary. The monitor therefore runs as a deterministic polling script that the **main agent** launches in the background. Rationale: `../../docs/inline-monitors.md`.
 
 Launch the monitor with **`run_in_background: true`** (prefix with the recipe `auth_prefix`/kube context if defined):
 
@@ -279,7 +279,7 @@ aws eks describe-cluster --name "${CLUSTER_NAME}" \
    ```
 
 2. If ALL nodegroups are `ACTIVE` + `TARGET_VERSION`:
-   - Stop the background terraform apply process (TaskStop)
+   - Stop the background terraform apply shell (KillShell)
    - Run `terraform apply -auto-approve` (no target) to clean up any deposed resources
    - Proceed to Phase 2 gate
 
@@ -300,7 +300,7 @@ aws eks describe-cluster --name "${CLUSTER_NAME}" \
 - `ACTIVE` + correct version → Run gate script
 - `FAILED` → **STOP immediately**
 
-### 2-4. Gate Verification
+### 2-5. Gate Verification
 
 ```bash
 python3 scripts/phase_gate.py phase2 \
@@ -349,9 +349,10 @@ New Fargate pods may show `Pending` transiently while a fresh Fargate node provi
 
 ## Phase 4: Data Plane (Managed Node Group) Rolling Update
 
-Phase 4 has two parts:
-1. **4-A**: Update AMI alias in tfvars and apply MNG rolling update via Terraform
-2. **4-B**: Monitor rollout and verify via gate script
+Phase 4 runs in three stages:
+1. **Start the monitors** (4-0, 4-0b) — before touching anything.
+2. **Roll the node groups** (4-1 → 4-4) — detect `amiType`, update the AMI alias in tfvars, plan, apply.
+3. **Verify** (4-5, 4-6) — watch the rollout, then run the gate script.
 
 ### 4-0. Start Drain Monitor (inline background)
 
@@ -359,7 +360,7 @@ Phase 4 has two parts:
 > **If MNG is already in `UPDATING` state** (triggered by Phase 2 apply): start it IMMEDIATELY upon entering Phase 4 — do not wait for AMI update steps.
 > Do NOT proceed with AMI alias updates or terraform apply until the monitor is active.
 >
-> **Why inline, not a sub-agent**: see step 2-2 and `agents/k8s-drain-monitor.md`. The main agent runs the monitor as a background polling script.
+> **Why inline, not a sub-agent**: see step 2-2 and `../../docs/inline-monitors.md`. The main agent runs the monitor as a background polling script.
 
 Launch the monitor with **`run_in_background: true`**:
 
@@ -378,7 +379,7 @@ It polls all-namespace Warning events AND PDB `disruptionsAllowed=0` (drain bloc
 > ⛔ **HARD GATE**: If `services` is defined, start the service monitor and confirm it is running BEFORE any Phase 4 action.
 > Do NOT proceed until both the drain monitor and service monitor are active.
 >
-> **Why inline, not a sub-agent**: same reasons as the drain monitor — see `agents/k8s-service-aware.md`.
+> **Why inline, not a sub-agent**: same reasons as the drain monitor — see `../../docs/inline-monitors.md`.
 
 Serialize the recipe `services` field to a JSON array and launch with **`run_in_background: true`**:
 
@@ -465,7 +466,7 @@ python3 scripts/audit_event.py \
   --detail "eks_node_ami_alias_bottlerocket: ${OLD_AMI} → ${NEW_AMI} (amiType=${AMI_TYPE})"
 ```
 
-### 4-2. Targeted Plan for MNG
+### 4-3. Targeted Plan for MNG
 
 ```bash
 cd "${TF_DIR}" && terraform plan \
@@ -476,7 +477,7 @@ Review the plan:
 - `aws_eks_node_group` `release_version` change → Expected
 - Any `-/+` (destroy-recreate) on `aws_eks_node_group` → **STOP and ask user**
 
-### 4-3. Targeted Apply for MNG
+### 4-4. Targeted Apply for MNG
 
 ```bash
 cd "${TF_DIR}" && terraform apply \
@@ -485,7 +486,7 @@ cd "${TF_DIR}" && terraform apply \
 
 This triggers the MNG rolling update. Typical duration: 10–30 minutes per node group.
 
-### 4-4. Monitor Node Rollout
+### 4-5. Monitor Node Rollout
 
 Poll every 60 seconds until all MNG nodes show the target version:
 
@@ -494,7 +495,7 @@ kubectl get nodes \
   -o custom-columns='NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,READY:.status.conditions[-1].status'
 ```
 
-### 4-5. Gate Verification
+### 4-6. Gate Verification
 
 ```bash
 python3 scripts/phase_gate.py phase4 \
@@ -522,7 +523,7 @@ On PASS, proceed to Phase 5.
 > AMI alias update triggers Karpenter drift detection and automatic node replacement immediately.
 > Do NOT modify tfvars until the monitor is active.
 >
-> **Why inline, not a sub-agent**: see step 2-2 and `agents/k8s-drain-monitor.md`.
+> **Why inline, not a sub-agent**: see step 2-2 and `../../docs/inline-monitors.md`.
 
 Launch the monitor with **`run_in_background: true`**:
 
@@ -540,7 +541,7 @@ It polls all-namespace Warning events, PDB status, AND NodeClaim Ready condition
 
 > ⛔ **HARD GATE**: If `services` is defined, start the service monitor and confirm it is running BEFORE updating `eks_node_ami_alias_*` in tfvars.
 >
-> **Why inline, not a sub-agent**: see `agents/k8s-service-aware.md`.
+> **Why inline, not a sub-agent**: see `../../docs/inline-monitors.md`.
 
 Serialize the recipe `services` field to JSON and launch with **`run_in_background: true`**:
 
@@ -667,7 +668,7 @@ Determine the report type from the outcome and generate using the template in [r
 1. Extract Phase start/end times from audit.log (`# Started:` / `# Finished:` lines per phase block)
 2. Calculate duration = Finished − Started for each phase
 3. Extract all WARN/FAIL events from audit.log (all lines matching `{timestamp} | {rule_id} | WARN|FAIL | {detail}`)
-4. Include Sub-Agent events (`DRAIN-P*`, `SVC-P*` rule-ids) in the events table
+4. Include inline monitor events (`DRAIN-P*`, `SVC-P*` rule-ids) in the events table
 5. Summarize troubleshooting actions taken during the upgrade in `{TROUBLESHOOTING_LOG}`
 6. Query final cluster state for `{FINAL_CLUSTER_STATE_TABLE}`
 
