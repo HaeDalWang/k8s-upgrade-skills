@@ -4,7 +4,8 @@ version = "1.0.0"
 description = "AI Agent를 위한 Kubernetes 업그레이드 자동화 Skill"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = {text = "PolyForm-Noncommercial-1.0.0"}
+license-files = ["LICENSE"]
 
 [project.optional-dependencies]
 test = [

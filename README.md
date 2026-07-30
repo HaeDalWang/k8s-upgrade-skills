@@ -312,3 +312,9 @@ graph TD
 ├─ install.sh                          # 전역 설치 스크립트 (두 스킬 설치)
 └── README.md
 ```
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE)
+
+비상업적 목적(개인 학습·평가·연구 등)의 사용은 무료입니다. 회사·조직에서 업무 목적으로 사용하려면 별도의 상업 라이선스 계약이 필요합니다. 문의: <svvwac98@gmail.com>
