@@ -1,0 +1,25 @@
+{
+  "chart_name": "kubernetes-event-exporter",
+  "last_verified": "2026-08-31",
+  "repo": "oci://ghcr.io/deliveryhero/helm-charts",
+  "compat_source": "https://github.com/resmoio/kubernetes-event-exporter",
+  "chart_to_app": "app_version",
+  "has_crds": false,
+  "note": "이벤트를 외부로 내보내는 부가 컴포넌트. helm show chart 조회가 실패해 app 버전 실측은 못 했다 — 등록 목적은 미등록 차트로 흘러가지 않게 하는 것.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "kubeversion_only"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "note": "ghcr.io 403(인증 필요)으로 차트를 받지 못해 미측정.",
+    "measured": false
+  }
+}

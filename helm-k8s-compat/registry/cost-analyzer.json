@@ -1,0 +1,28 @@
+{
+  "chart_name": "cost-analyzer",
+  "last_verified": "2026-08-31",
+  "repo": "oci://public.ecr.aws/kubecost",
+  "compat_source": "https://docs.kubecost.com/",
+  "chart_to_app": "same",
+  "has_crds": true,
+  "note": "Kubecost. chart 버전 = app 버전(실측 2.3.1). helm release 이름은 보통 kubecost지만 chart 이름은 cost-analyzer다.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "chart_inspect"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 1,
+    "webhooks": 0,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

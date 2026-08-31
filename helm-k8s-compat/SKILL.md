@@ -26,8 +26,13 @@ All scripts are in `./scripts/`. The curated knowledge base is in `./registry/`.
 
 ## When to Use
 
-- As a **Phase 0 supplement** during a Kubernetes/EKS upgrade (run alongside the main upgrade skill's pre-flight gate).
-- **Standalone**, any time, to audit chart compatibility without performing an upgrade.
+- As a **Phase 0 supplement** during a Kubernetes/EKS upgrade — pass the current and target versions.
+- As a **periodic health check** — pass the *same* version for both (`--current 1.35 --target 1.35`).
+  This answers "are my charts still in a supported range, and is anything past EOL?" without an
+  upgrade in sight. It catches charts that have already drifted out of support on the version you
+  are running today.
+
+Only a downgrade (`target < current`) is rejected.
 
 This skill is IaC-agnostic — it inspects Helm releases, not Terraform/CDK/etc. It works whether or not
 the main upgrade skill is installed.
@@ -80,7 +85,8 @@ The script does the following automatically:
 1. `helm ls -A -o json` to enumerate installed releases.
 2. Match each release against the curated `registry/` by chart name.
 3. Evaluate three orthogonal axes plus K8s API-removal events (see `registry/_schema.md`):
-   - **support** — does the installed chart version support the target K8s? (`window` / `minor_pin` / `unknown`)
+   - **support** — does the installed chart version support the target K8s? (`window` / `k8s_floor` / `minor_pin` / `unknown`)
+   - **freshness** — was this registry entry verified recently enough to trust a PASS? (`HELM-STALE`, INFO only)
    - **lifecycle** — is the chart retired, or is the installed release past its EOL date?
    - **upgrade_hazards** — if the chart must be bumped, what manual steps bite (CRD re-apply, IAM, webhook, removed flags)?
    - **k8s_breaks** — removed/changed APIs in the jump window (`current < V <= target`).
@@ -98,6 +104,7 @@ The script does the following automatically:
 | `0` | OPEN — no compatibility problems | Proceed. |
 | `1` | BLOCKED — CRITICAL finding(s) | **Stop.** A chart does not support the target version (or hits a removed API). Resolve before upgrading. |
 | `2` | WARN — HIGH finding(s) | Manual review required. Surface every finding to the user and get explicit confirmation. |
+| `64` | Usage error — bad version string, downgrade, malformed `--releases-json` | **Not a gate verdict.** Fix the invocation and re-run. Never treat as WARN. |
 | `127` | helm CLI missing / no cluster access | Report; ask user to install helm or fix kubeconfig. Not a pass. |
 
 **The exit code is authoritative.** Read it directly; never re-derive the verdict from the printed text.
@@ -126,7 +133,8 @@ Example report shape:
 ```
 
 For `unknown`-type charts (no machine-readable matrix), fetch the chart's `compat_source` URL to give the
-user the latest official support guidance instead of guessing.
+user the latest official support guidance instead of guessing. The same applies whenever `HELM-STALE`
+appears: the PASS stands, but say plainly that its basis is old and offer to re-verify.
 
 ---
 
@@ -138,8 +146,13 @@ user the latest official support guidance instead of guessing.
   `helm show chart <release>` and consult the chart's release notes.
 - **`kubeVersion` is a weak signal anyway.** Most charts declare only a lower bound (`>=1.21`), so it rarely
   catches incremental-upgrade blockers. The curated registry is the real source of truth.
-- **Support matrices drift.** Registry data reflects the date it was curated. For `unknown` charts and
+- **Support matrices drift.** Registry data reflects the date it was curated, recorded per chart in
+  `last_verified`. When a PASS rests on data older than 180 days the checker says so (`HELM-STALE`, INFO)
+  rather than letting it pass silently — but it cannot know *what* changed. For `unknown` charts and
   borderline cases, the live `compat_source` fetch is authoritative.
+- **`verified_k8s_max` is a human record, not a vendor guarantee.** For charts that publish no upper
+  bound, it means "someone checked and found nothing blocking up to this version." Going past it
+  re-raises the warning; it is never a permanent pass.
 - This skill checks **chart compatibility**, not running-workload API usage. Pair it with EKS Insights /
   kubent (API scans) for full coverage — they are complementary, not redundant.
 

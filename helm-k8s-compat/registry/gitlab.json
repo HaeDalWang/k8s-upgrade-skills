@@ -1,0 +1,33 @@
+{
+  "chart_name": "gitlab",
+  "last_verified": "2026-08-31",
+  "repo": "https://charts.gitlab.io",
+  "compat_source": "https://docs.gitlab.com/charts/",
+  "chart_to_app": "app_version",
+  "has_crds": false,
+  "note": "chart와 app 체계가 다르다 — 실측 chart 9.11.12 = app v18.11.11.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "kubeversion_only"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "chart 10.x(app 19.x) 이상으로 업그레이드",
+      "fires_below": "10.0.0",
+      "type": "FLAG_REMOVED",
+      "action": "GitLab 19.x부터 Ingress 대신 Gateway API로 기본 전환된다. Gateway API CRD와 구현체(Istio 등)가 준비돼 있는지 먼저 확인할 것",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "note": "helm template이 필수 values(certmanager-issuer.email) 때문에 렌더 실패 — 표면 미측정.",
+    "measured": false
+  }
+}

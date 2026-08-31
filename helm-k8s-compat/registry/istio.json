@@ -1,0 +1,85 @@
+{
+  "chart_name": [
+    "base",
+    "istiod",
+    "cni",
+    "ztunnel"
+  ],
+  "last_verified": "2026-08-31",
+  "repo": "oci://gcr.io/istio-release/charts",
+  "compat_source": "https://istio.io/latest/docs/releases/supported-releases/",
+  "chart_to_app": "same",
+  "has_crds": true,
+  "note": "Istio는 base/istiod/cni/ztunnel(ambient) 차트를 같은 버전으로 함께 배포하며 지원 매트릭스도 공통이다. 그래서 이 파일 하나가 네 chart_name을 모두 담는다. base 차트가 CRD를 소유하므로 업그레이드 시 base를 먼저 올린다.",
+  "support": {
+    "type": "window",
+    "note": "공식 'Support status of Istio releases' 표의 'Supported Kubernetes Versions' 열 기준. 'Tested, but not supported' 열은 지원으로 치지 않는다.",
+    "matrix": [
+      {
+        "chart_range": "1.27.x",
+        "k8s_min": "1.29",
+        "k8s_max": "1.33"
+      },
+      {
+        "chart_range": "1.28.x",
+        "k8s_min": "1.30",
+        "k8s_max": "1.34"
+      },
+      {
+        "chart_range": "1.29.x",
+        "k8s_min": "1.31",
+        "k8s_max": "1.35"
+      },
+      {
+        "chart_range": "1.30.x",
+        "k8s_min": "1.32",
+        "k8s_max": "1.36"
+      }
+    ],
+    "evidence": "official_matrix"
+  },
+  "lifecycle": {
+    "type": "per_release",
+    "policy": "마이너 릴리스는 N+2 릴리스 후 6주까지 지원. 자체 LTS 없음.",
+    "severity": "HIGH",
+    "releases": [
+      {
+        "range": "1.26.x",
+        "eol_date": "2025-12-22"
+      },
+      {
+        "range": "1.27.x",
+        "eol_date": "2026-04-07"
+      },
+      {
+        "range": "1.28.x",
+        "eol_date": "2026-07-01"
+      },
+      {
+        "range": "1.29.x",
+        "eol_date": "2026-10-31"
+      },
+      {
+        "range": "1.30.x",
+        "eol_date": "2026-12-31"
+      }
+    ]
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "Istio 마이너 업그레이드",
+      "type": "CRD",
+      "action": "base 차트를 먼저 올려 CRD를 갱신한 뒤 istiod → cni → ztunnel 순으로 진행. Helm은 CRD를 자동 갱신하지 않는다. ambient 모드는 cni/ztunnel이 노드 단위로 동작하므로 데이터플레인 재시작 영향을 확인할 것",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 15,
+    "webhooks": 1,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 1
+  }
+}

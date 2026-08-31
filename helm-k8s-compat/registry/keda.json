@@ -1,0 +1,35 @@
+{
+  "chart_name": "keda",
+  "last_verified": "2026-08-31",
+  "repo": "https://kedacore.github.io/charts",
+  "compat_source": "https://keda.sh/docs/latest/operate/cluster/",
+  "chart_to_app": "same",
+  "has_crds": true,
+  "note": "chart 버전 = app 버전(실측 2.18.0). ScaledObject/ScaledJob/TriggerAuthentication CRD 보유.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart의 kubeVersion 제약(>=v1.23.0-0)을 K8s 1.36이 충족하고 공식 문서에 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "chart_inspect"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "차트 마이너/메이저 업그레이드",
+      "type": "CRD",
+      "action": "Helm v3는 CRD를 자동 갱신하지 않는다. 업그레이드 전 릴리스 노트의 CRD 변경사항을 확인하고 kubectl apply로 수동 갱신할 것",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 6,
+    "webhooks": 1,
+    "apiservices": 1,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

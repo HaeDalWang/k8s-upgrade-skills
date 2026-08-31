@@ -1,0 +1,28 @@
+{
+  "chart_name": "fluent-bit",
+  "last_verified": "2026-08-31",
+  "repo": "https://fluent.github.io/helm-charts",
+  "compat_source": "https://github.com/fluent/helm-charts",
+  "chart_to_app": "app_version",
+  "has_crds": false,
+  "note": "chart와 app 체계가 다르다 — 실측 chart 0.54.0 = app 4.1.0. DaemonSet으로 전 노드에 배포되므로 노드 교체마다 재시작된다.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "chart_inspect"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 0,
+    "webhooks": 0,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 1
+  }
+}

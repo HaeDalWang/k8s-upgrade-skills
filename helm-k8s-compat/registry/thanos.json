@@ -1,0 +1,28 @@
+{
+  "chart_name": "thanos",
+  "last_verified": "2026-08-31",
+  "repo": "oci://registry-1.docker.io/bitnamicharts",
+  "compat_source": "https://github.com/bitnami/charts/tree/main/bitnami/thanos",
+  "chart_to_app": "app_version",
+  "has_crds": false,
+  "note": "chart와 app 체계가 다르다 — 실측 chart 17.3.1 = app 0.39.2. Bitnami 차트는 major bump마다 breaking change가 잦으니 UPGRADING.md를 확인할 것.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "chart_inspect"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 0,
+    "webhooks": 0,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

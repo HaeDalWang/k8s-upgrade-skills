@@ -87,6 +87,7 @@ Use these as the `→ 조치` line. Tailor to the specific chart from the findin
 | Finding | Remediation |
 |---|---|
 | `HELM-SUPPORT` window exceeded | Bump the chart to a version whose support window includes the target K8s, **before** upgrading the cluster. |
+| `HELM-STALE` | The registry entry backing this PASS is older than 180 days (or has no `last_verified`). Not a defect — re-check `compat_source` and update `last_verified` if it still holds. |
 | `HELM-SUPPORT` minor_pin mismatch | Upgrade the chart so its app minor equals the target K8s minor (e.g. cluster-autoscaler 1.34.x for K8s 1.34). |
 | `HELM-SUPPORT` unknown | Open the chart's `compat_source` URL; confirm target-K8s support from official docs. Do not assume PASS. |
 | `HELM-LIFECYCLE` whole_retired | Plan migration to the documented successor (e.g. Gateway API). Existing deploys keep working but receive no security fixes. |
@@ -103,7 +104,7 @@ Use these as the `→ 조치` line. Tailor to the specific chart from the findin
 | Symptom | Cause | Response |
 |---|---|---|
 | exit `127` | `helm` not installed or no cluster access | Report plainly; ask user to install helm / fix kubeconfig. **Not a pass.** |
-| `--releases-json` parse error (exit 1) | Malformed injected JSON | Fix the JSON; this path is for testing/dry-run only. |
+| exit `64` | Usage error — bad version string, downgrade/same version, malformed `--releases-json` | Fix the invocation and re-run. This is **not** a gate verdict; never read it as WARN. |
 | 0 registered charts loaded | `--registry-dir` wrong or empty | Verify the path points at `helm-k8s-compat/registry/`. |
 
 Never convert an inability-to-check into an implicit "compatible." Surface the gap to the user.

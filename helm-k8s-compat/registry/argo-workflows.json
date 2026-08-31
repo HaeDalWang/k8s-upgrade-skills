@@ -1,0 +1,32 @@
+{
+  "chart_name": "argo-workflows",
+  "last_verified": "2026-08-31",
+  "repo": "oci://ghcr.io/argoproj/argo-helm",
+  "compat_source": "https://argo-workflows.readthedocs.io/en/latest/",
+  "chart_to_app": "app_version",
+  "has_crds": true,
+  "note": "chart와 app 체계가 다르다 — 실측 chart 1.0.13 = app v4.0.5. Workflow/CronWorkflow/WorkflowTemplate CRD 보유. 실행 중인 Workflow가 있으면 노드 교체 영향을 확인할 것.",
+  "support": {
+    "type": "unknown",
+    "verified_k8s_max": "1.36",
+    "note": "chart에 kubeVersion 제약이 없고 공식 문서에 K8s 상한 명시가 없음. helm show chart로 2026-08-31 실측 확인. 머신리더블 매트릭스가 아니므로 자동 판정이 아니라 '확인 기록'이다.",
+    "evidence": "chart_inspect"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "차트 마이너/메이저 업그레이드",
+      "type": "CRD",
+      "action": "Helm v3는 CRD를 자동 갱신하지 않는다. 업그레이드 전 릴리스 노트의 CRD 변경사항을 확인하고 kubectl apply로 수동 갱신할 것",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "note": "crds.install 기본값이 true인데도 렌더 결과가 0이다 — 차트가 CRD를 pre-install/pre-upgrade hook Job으로 server-side apply 하기 때문. 실제로는 CRD를 사용한다.",
+    "hook_installed_crds": true
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "chart_name": "metrics-server",
+  "last_verified": "2026-08-31",
+  "repo": "https://kubernetes-sigs.github.io/metrics-server",
+  "compat_source": "https://github.com/kubernetes-sigs/metrics-server#compatibility-matrix",
+  "chart_to_app": "app_version",
+  "has_crds": false,
+  "note": "chart와 app 버전 체계가 완전히 다르다 — 실측 chart 3.13.0 = app 0.8.0. 공식 매트릭스가 app(Metrics Server) 버전 기준이라 match_on을 app으로 둔다. APIService(metrics.k8s.io/v1beta1)를 등록하지만 CRD는 아니다.",
+  "support": {
+    "type": "window",
+    "match_on": "app",
+    "note": "공식 매트릭스는 '지원 K8s 최소 버전'만 제시하고 상한을 명시하지 않는다. 그래서 각 행에 k8s_min만 두고 k8s_max는 비운다(상한 없음).",
+    "matrix": [
+      {
+        "chart_range": "0.6.x",
+        "k8s_min": "1.25"
+      },
+      {
+        "chart_range": "0.7.x",
+        "k8s_min": "1.27"
+      },
+      {
+        "chart_range": "0.8.x",
+        "k8s_min": "1.31"
+      },
+      {
+        "chart_range": "0.9.x",
+        "k8s_min": "1.34"
+      }
+    ],
+    "evidence": "official_matrix"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 0,
+    "webhooks": 0,
+    "apiservices": 1,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

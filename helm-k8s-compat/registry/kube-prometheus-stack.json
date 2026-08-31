@@ -1,20 +1,20 @@
 {
   "chart_name": "kube-prometheus-stack",
+  "last_verified": "2026-08-31",
   "repo": "https://prometheus-community.github.io/helm-charts",
   "compat_source": "https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack",
   "chart_to_app": "same",
   "has_crds": true,
   "note": "chart appVersion = Prometheus Operator 버전(매칭 CRD 포함). 머신리더블 K8s 매트릭스 없음(Chart.yaml은 'Kubernetes 1.19+'만). CRD가 매우 크고 많음 — major 버전 bump = breaking change(수동 조치 필요)를 의미. 버전별 상세는 UPGRADE.md 참조.",
-
   "support": {
     "type": "unknown",
-    "note": "차트 README에 K8s 1.33/1.34/1.35 명시 없음. 최소 Kubernetes 1.19+, Helm 3+. 차트 버전별 정확한 K8s 지원은 Chart.yaml/릴리스 노트 직접 확인."
+    "verified_k8s_max": "1.36",
+    "note": "helm chart(prometheus-community) 자체에는 K8s 매트릭스가 없다(Chart.yaml은 'Kubernetes 1.19+'만). verified_k8s_max는 상위 프로젝트 prometheus-operator/kube-prometheus가 유지하는 매트릭스(release-0.18 → K8s 1.33~1.36, main → 1.34~1.36)를 간접 근거로 삼은 것이다. chart 버전과 kube-prometheus release는 서로 다른 체계이므로 이 매핑은 참고치이며, 정확한 대조는 chart appVersion(=Prometheus Operator 버전)과 해당 kube-prometheus release를 직접 맞춰봐야 한다.",
+    "evidence": "official_doc"
   },
-
   "lifecycle": {
     "type": "none"
   },
-
   "upgrade_hazards": [
     {
       "trigger": "major 버전 bump",
@@ -23,6 +23,13 @@
       "severity": "HIGH"
     }
   ],
-
-  "k8s_breaks": {}
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 10,
+    "webhooks": 2,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 1
+  }
 }

@@ -107,10 +107,12 @@ class TestInputValidation:
             tmp_path, [], current="1.34", target="1.33")
         assert rc != 0
 
-    def test_equal_versions_rejected(self, tmp_path):
+    def test_equal_versions_are_audit_mode_not_error(self, tmp_path):
+        # 동일 버전은 "지금 상태 점검" 모드다 — 차트를 올릴 때가 됐는지 주기적으로 보는 용도
         rc, audit, out = run_checker(
             tmp_path, [], current="1.34", target="1.34")
-        assert rc != 0
+        assert rc == 0
+        assert "상태 점검" in audit
 
 
 class TestMalformedRelease:
@@ -148,3 +150,101 @@ class TestK8sBreaksRequiresChartMin:
             current="1.21", target="1.25")
         assert "v1beta1" in audit
         assert rc == 1
+
+
+class TestUsageErrorsAreNotGateVerdicts:
+    """입력 오류가 WARN(2)으로 새어나가면 '검토 후 진행'으로 오해되어 게이트가 무력화된다."""
+
+    def test_malformed_version_exits_64_not_2(self, tmp_path):
+        rc, _, _ = run_checker(tmp_path, [], current="abc", target="1.36")
+        assert rc == 64
+
+    def test_downgrade_exits_64_not_2(self, tmp_path):
+        rc, _, _ = run_checker(tmp_path, [], current="1.36", target="1.35")
+        assert rc == 64
+
+    def test_same_version_is_not_a_usage_error(self, tmp_path):
+        # 동일 버전은 정기 점검 용도라 입력 오류가 아니다
+        rc, _, _ = run_checker(tmp_path, [], current="1.36", target="1.36")
+        assert rc != 64
+
+
+class TestMinorPinAppVersionMissing:
+    def test_missing_app_version_warns_not_blocks(self, tmp_path):
+        # cluster-autoscaler chart 9.51.0은 app 1.x 체계 — chart 버전을 app으로 오인하면 안 됨
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "ca", "namespace": "kube-system",
+              "chart": "cluster-autoscaler-9.51.0", "app_version": ""}],
+            current="1.35", target="1.36")
+        assert rc == 2
+        assert "app 9.51" not in audit
+
+
+class TestStalenessSurfacing:
+    def test_stale_registry_adds_info_but_keeps_gate_open(self, tmp_path):
+        # cert-manager 1.21.x는 K8s 1.36 지원 → PASS. 단 오래 지난 시점이면 근거 노후를 알린다.
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "cert-manager", "namespace": "cert-manager",
+              "chart": "cert-manager-v1.21.0", "app_version": "v1.21.0"}],
+            current="1.35", target="1.36", today="2027-06-01")
+        assert rc == 0                    # INFO는 게이트를 막지 않는다
+        assert "HELM-STALE" in audit
+
+    def test_fresh_registry_has_no_stale_noise(self, tmp_path):
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "cert-manager", "namespace": "cert-manager",
+              "chart": "cert-manager-v1.21.0", "app_version": "v1.21.0"}],
+            current="1.35", target="1.36", today="2026-08-31")
+        assert rc == 0
+        assert "HELM-STALE" not in audit
+
+    def test_app_layer_charts_stay_quiet(self, tmp_path):
+        # K8s 확장 지점이 없는 앱 계층은 확인 기록만으로 조용히 통과한다
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "keycloak", "namespace": "keycloak",
+              "chart": "keycloak-25.2.0", "app_version": "26.3.3"},
+             {"name": "locust", "namespace": "locust",
+              "chart": "locust-0.31.5", "app_version": "2.15.1"}],
+            current="1.35", target="1.36", today="2026-08-31")
+        assert rc == 0
+
+    def test_charts_with_coupling_surface_still_warn(self, tmp_path):
+        # 반대로 CRD·webhook을 가진 차트는 "문서에 상한이 없더라"로 통과시키지 않는다
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "keda", "namespace": "keda",
+              "chart": "keda-2.18.0", "app_version": "2.18.0"}],
+            current="1.35", target="1.36", today="2026-08-31")
+        assert rc == 2
+        assert "확장 지점" in audit
+
+
+class TestCurrentStateAuditMode:
+    """업그레이드 사전 점검 말고도, 차트를 올릴 때가 됐는지 주기적으로 보는 용도가 있다."""
+
+    def test_same_version_is_audit_mode_not_usage_error(self, tmp_path):
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "keycloak", "namespace": "keycloak",
+              "chart": "keycloak-25.2.0", "app_version": "26.3.3"}],
+            current="1.35", target="1.35", today="2026-08-31")
+        assert rc != 64
+        assert "상태 점검" in audit
+
+    def test_audit_mode_catches_already_violated_floor(self, tmp_path):
+        # K8s를 올리지 않아도 지금 이미 지원 범위 밖이면 잡아야 한다
+        rc, audit, out = run_checker(
+            tmp_path,
+            [{"name": "karpenter", "namespace": "karpenter",
+              "chart": "karpenter-1.8.6", "app_version": "1.8.6"}],
+            current="1.35", target="1.35", today="2026-08-31")
+        assert rc == 1
+        assert "1.9 이상" in audit
+
+    def test_downgrade_still_rejected(self, tmp_path):
+        rc, _, _ = run_checker(tmp_path, [], current="1.36", target="1.35")
+        assert rc == 64

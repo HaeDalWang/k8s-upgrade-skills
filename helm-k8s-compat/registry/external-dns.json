@@ -1,0 +1,85 @@
+{
+  "chart_name": "external-dns",
+  "last_verified": "2026-08-31",
+  "repo": "https://kubernetes-sigs.github.io/external-dns",
+  "compat_source": "https://github.com/kubernetes-sigs/external-dns#kubernetes-version-compatibility",
+  "chart_to_app": "app_version",
+  "has_crds": true,
+  "note": "chart와 app 버전 체계가 다르다 — 실측 chart 1.19.0 = app 0.19.0 (minor는 같으나 major가 1 vs 0). 공식 호환성 표가 app(ExternalDNS) 버전 기준이라 support.match_on을 app으로 둔다. DNSEndpoint CRD는 선택 기능이라 has_crds는 false.",
+  "support": {
+    "type": "window",
+    "match_on": "app",
+    "note": "공식 README의 Kubernetes version compatibility 표. 0.18.x부터 endpoints 대신 discovery.k8s.io/endpointslices를 쓰면서 K8s 1.33+ 지원이 열렸고, 0.17.x 이하는 1.32가 상한이다.",
+    "matrix": [
+      {
+        "chart_range": "0.14.x",
+        "k8s_min": "1.19",
+        "k8s_max": "1.32"
+      },
+      {
+        "chart_range": "0.15.x",
+        "k8s_min": "1.19",
+        "k8s_max": "1.32"
+      },
+      {
+        "chart_range": "0.16.x",
+        "k8s_min": "1.19",
+        "k8s_max": "1.32"
+      },
+      {
+        "chart_range": "0.17.x",
+        "k8s_min": "1.19",
+        "k8s_max": "1.32"
+      },
+      {
+        "chart_range": "0.18.x",
+        "k8s_min": "1.21"
+      },
+      {
+        "chart_range": "0.19.x",
+        "k8s_min": "1.21"
+      },
+      {
+        "chart_range": "0.20.x",
+        "k8s_min": "1.21"
+      },
+      {
+        "chart_range": "0.21.x",
+        "k8s_min": "1.21"
+      },
+      {
+        "chart_range": "0.22.x",
+        "k8s_min": "1.21"
+      }
+    ],
+    "evidence": "official_matrix"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "app 0.18.0 이상으로 업그레이드",
+      "fires_below": "0.18.0",
+      "type": "FLAG_REMOVED",
+      "action": "endpoints 대신 discovery.k8s.io/endpointslices를 사용하도록 전환됨 — RBAC에 endpointslices 읽기 권한이 없으면 서비스 탐지가 조용히 실패한다",
+      "severity": "HIGH"
+    },
+    {
+      "trigger": "app 0.19.0 이상으로 업그레이드",
+      "fires_below": "0.19.0",
+      "type": "FLAG_REMOVED",
+      "action": "내부 IPv6를 기본 노출하지 않도록 변경 + 레거시 리스너 비활성화. IPv6 레코드에 의존하는 구성이면 확인 필요",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 1,
+    "webhooks": 0,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

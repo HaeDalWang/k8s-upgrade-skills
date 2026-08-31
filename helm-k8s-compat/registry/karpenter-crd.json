@@ -1,0 +1,43 @@
+{
+  "chart_name": "karpenter-crd",
+  "last_verified": "2026-08-31",
+  "repo": "oci://public.ecr.aws/karpenter",
+  "compat_source": "https://karpenter.sh/docs/upgrading/upgrade-guide/",
+  "chart_to_app": "same",
+  "has_crds": true,
+  "note": "Karpenter의 CRD만 담는 별도 차트. Helm이 CRD 라이프사이클을 관리하지 않기 때문에 존재한다. karpenter 차트와 **항상 같은 버전**이어야 하므로 호환성 매트릭스도 karpenter와 동일하게 평가한다.",
+  "support": {
+    "type": "k8s_floor",
+    "note": "karpenter 본체와 동일한 매트릭스. 두 차트 버전이 어긋나면 CRD 스키마와 컨트롤러가 불일치한다.",
+    "floors": {
+      "1.30": "0.37",
+      "1.31": "1.0.5",
+      "1.32": "1.2",
+      "1.33": "1.5",
+      "1.34": "1.6",
+      "1.35": "1.9",
+      "1.36": "1.13"
+    },
+    "evidence": "official_matrix"
+  },
+  "lifecycle": {
+    "type": "none"
+  },
+  "upgrade_hazards": [
+    {
+      "trigger": "karpenter 본체와 버전 불일치",
+      "type": "CRD",
+      "action": "karpenter 차트와 동일한 버전으로 함께 올릴 것. 컨트롤러보다 CRD가 낮으면 새 필드가 거부되고, 높으면 컨트롤러가 모르는 스키마가 들어온다",
+      "severity": "HIGH"
+    }
+  ],
+  "k8s_breaks": {},
+  "surface": {
+    "verified_by": "helm template + helm show crds (2026-08-31, 클러스터 미접속)",
+    "crds": 4,
+    "webhooks": 0,
+    "apiservices": 0,
+    "csi_drivers": 0,
+    "daemonsets": 0
+  }
+}

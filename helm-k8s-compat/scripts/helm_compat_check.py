@@ -21,6 +21,7 @@ Exit codes (기존 gate_check.py와 동일 신뢰 모델):
   0 = PASS (호환성 문제 없음)
   1 = FAIL (CRITICAL — 업그레이드 차단, 차트 먼저 조치)
   2 = WARN (HIGH — 수동 검토 필요)
+  64 = 입력 오류 (잘못된 버전 문자열 등 — 게이트 판정 아님)
   127 = helm CLI 미존재
 """
 
@@ -35,6 +36,10 @@ try:
 except ImportError:
     print("ERROR: compat_lib.py not found (같은 scripts 디렉토리에 있어야 함).", file=sys.stderr)
     sys.exit(1)
+
+# 입력(사용법) 오류 — WARN(2)과 반드시 구분되어야 한다.
+# 2를 쓰면 "수동 검토 후 진행"으로 오해되어 게이트가 무력화된다. sysexits.h의 EX_USAGE.
+EXIT_USAGE = 64
 
 RED = "\033[0;31m"
 YELLOW = "\033[0;33m"
@@ -72,14 +77,28 @@ def evaluate_release(entry: dict, release: dict, current: str, target: str,
     """registry entry와 설치 release를 대조하여 Finding 리스트를 반환한다."""
     chart_ref = release.get("chart", "")
     _, chart_ver = compat_lib.parse_chart_ref(chart_ref)
-    app_ver = release.get("app_version", "") or chart_ver
+    # chart 버전으로 폴백하지 않는다 — chart와 app이 별개 체계인 차트에서
+    # chart 9.51.0을 app 9.51로 오인해 false BLOCK이 났다.
+    # 폴백 가능 여부는 registry의 chart_to_app이 판단한다(compat_lib._resolve_app_minor).
+    app_ver = release.get("app_version") or ""
 
     findings = []
 
     # 1축: support
     sup = compat_lib.evaluate_support(entry, chart_ver, app_ver, target)
     findings.append(sup)
-    chart_upgrade_needed = (sup.result == "FAIL" and sup.severity in ("CRITICAL", "HIGH"))
+    # "차트를 올려야 한다"가 확정된 경우만. HIGH는 대개 "확인이 필요하다"이지
+    # "올려야 한다"가 아니다. 둘을 섞으면 판정 불가 하나가 CRD 경고와 hazard 목록을
+    # 통째로 끌고 나와(차트 하나당 3~5줄) 정작 확정된 블로커가 묻힌다.
+    chart_upgrade_needed = (sup.result == "FAIL" and sup.severity == "CRITICAL")
+
+    # 신선도 — 차트를 올릴 필요가 없다고 판정했을 때만 본다(PASS 및 verified_k8s_max INFO).
+    # CRITICAL/HIGH는 데이터가 낡아도 "조치 필요"라는 결론이 유효하고, 위험한 것은 오래된
+    # 근거로 "문제 없음"이라 말하는 쪽이다.
+    if not chart_upgrade_needed:
+        stale = compat_lib.evaluate_staleness(entry, today)
+        if stale is not None:
+            findings.append(stale)
 
     # 2축: lifecycle
     lc = compat_lib.evaluate_lifecycle(entry, chart_ver, today)
@@ -94,13 +113,8 @@ def evaluate_release(entry: dict, release: dict, current: str, target: str,
     if crd is not None:
         findings.append(crd)
 
-    # 등록된 upgrade_hazards (차트 업글이 필요할 때만 발화)
-    if chart_upgrade_needed:
-        for hz in entry.get("upgrade_hazards", []):
-            findings.append(compat_lib.Finding(
-                "HELM-HAZARD", "FAIL", hz.get("severity", "HIGH"),
-                f"{entry.get('chart_name', '?')}: {hz.get('action', '')} "
-                f"(trigger: {hz.get('trigger', '')})"))
+    # 등록된 upgrade_hazards (차트 업글이 필요할 때만, 아직 안 지나온 것만 발화)
+    findings.extend(compat_lib.fired_hazards(entry, chart_ver, chart_upgrade_needed))
 
     return findings
 
@@ -183,11 +197,13 @@ def main() -> int:
         if not compat_lib.is_valid_k8s_version(ver):
             print(f"{RED}ERROR: {label} '{ver}'는 유효한 K8s 버전이 아닙니다 "
                   f"(major.minor 형식 필요, 예: 1.33){NC}", file=sys.stderr)
-            return 2
-    if not compat_lib.k8s_gt(args.target, args.current):
-        print(f"{RED}ERROR: --target({args.target})은 --current({args.current})보다 "
-              f"높은 버전이어야 합니다 (다운그레이드/동일 버전 미지원){NC}", file=sys.stderr)
-        return 2
+            return EXIT_USAGE
+    # 동일 버전은 "지금 상태 점검" 모드다. 업그레이드 사전 점검 말고도, 차트를 올릴
+    # 때가 됐는지 주기적으로 확인하는 용도로 쓰인다. 다운그레이드만 거부한다.
+    if compat_lib.k8s_lt(args.target, args.current):
+        print(f"{RED}ERROR: --target({args.target})이 --current({args.current})보다 "
+              f"낮습니다 — 다운그레이드는 지원하지 않습니다{NC}", file=sys.stderr)
+        return EXIT_USAGE
 
     today = args.today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -197,7 +213,7 @@ def main() -> int:
             releases = json.loads(args.releases_json)
         except json.JSONDecodeError as e:
             print(f"ERROR: --releases-json 파싱 실패: {e}", file=sys.stderr)
-            return 1
+            return EXIT_USAGE
     else:
         releases = fetch_releases_from_helm()
         if releases is None:
@@ -206,8 +222,11 @@ def main() -> int:
 
     registry = compat_lib.load_registry(args.registry_dir)
 
+    audit_mode = args.current == args.target
+    headline = (f"현재 상태 점검: K8s {args.current}" if audit_mode
+                else f"업그레이드 사전 점검: K8s {args.current} → {args.target}")
     print("════════════════════════════════════════════════════════════")
-    print(f"  Helm 호환성 검증: K8s {args.current} → {args.target}")
+    print(f"  Helm 호환성 {headline}")
     print(f"  설치 Release: {len(releases)}개 | registry 차트: {len(registry)}개")
     print("════════════════════════════════════════════════════════════")
 
@@ -240,10 +259,15 @@ def main() -> int:
         for f in findings:
             agg.add(f)
 
-    write_audit(args.audit_log, f"# Upgrade: {args.current} → {args.target}", agg)
+    header = (f"# Audit: current K8s {args.current} (상태 점검)" if audit_mode
+              else f"# Upgrade: {args.current} → {args.target}")
+    write_audit(args.audit_log, header, agg)
 
     code = agg.exit_code()
     print()
+    # 차트가 수십 개면 개별 라인이 화면을 채운다 — 무엇을 봐야 하는지 한 줄로 요약한다.
+    print(f"  검사 {agg.checked}건 — CRITICAL {agg.critical_fail} / HIGH {agg.high_warn} / "
+          f"INFO {agg.medium_info} / PASS {agg.total_pass}")
     if code == 1:
         print(f"{RED}Gate: BLOCKED — CRITICAL {agg.critical_fail}개. 차트 조치 후 재실행.{NC}")
     elif code == 2:

@@ -1,36 +1,70 @@
 {
   "chart_name": "cert-manager",
+  "last_verified": "2026-08-31",
   "repo": "https://charts.jetstack.io",
   "compat_source": "https://cert-manager.io/docs/releases/",
   "chart_to_app": "same",
   "has_crds": true,
   "note": "chart 버전 = app 버전 (v1.20.3). CRD 다수 보유 → 업그레이드 시 CRD 수동 갱신 주의. release당 ~4개월 지원, 최소 2개 버전 유지(프로젝트 자체 LTS 없음).",
-
   "support": {
     "type": "window",
-    "note": "cert-manager 릴리스별 지원 K8s 범위 (releases 페이지 기준, 2026-03 스냅샷). 빌드 시 재확인 권장.",
+    "note": "cert-manager 릴리스별 지원 K8s 범위 (공식 releases 페이지 기준). 갱신 시점은 최상위 last_verified 참조.",
     "matrix": [
-      { "chart_range": "1.17.x", "k8s_min": "1.29", "k8s_max": "1.33" },
-      { "chart_range": "1.18.x", "k8s_min": "1.29", "k8s_max": "1.33" },
-      { "chart_range": "1.19.x", "k8s_min": "1.31", "k8s_max": "1.35" },
-      { "chart_range": "1.20.x", "k8s_min": "1.32", "k8s_max": "1.35" },
-      { "chart_range": "1.21.x", "k8s_min": "1.33", "k8s_max": "1.36" }
-    ]
+      {
+        "chart_range": "1.17.x",
+        "k8s_min": "1.29",
+        "k8s_max": "1.33"
+      },
+      {
+        "chart_range": "1.18.x",
+        "k8s_min": "1.29",
+        "k8s_max": "1.33"
+      },
+      {
+        "chart_range": "1.19.x",
+        "k8s_min": "1.31",
+        "k8s_max": "1.35"
+      },
+      {
+        "chart_range": "1.20.x",
+        "k8s_min": "1.32",
+        "k8s_max": "1.35"
+      },
+      {
+        "chart_range": "1.21.x",
+        "k8s_min": "1.33",
+        "k8s_max": "1.36"
+      }
+    ],
+    "evidence": "official_matrix"
   },
-
   "lifecycle": {
     "type": "per_release",
     "policy": "release당 ~4개월 지원, 동시 최소 2개 버전 유지. 프로젝트 자체 LTS 없음(일부 벤더 상용 LTS 제공).",
     "severity": "HIGH",
     "releases": [
-      { "range": "1.17.x", "eol_date": "2025-10-07" },
-      { "range": "1.18.x", "eol_date": "2026-03-10" },
-      { "range": "1.19.x", "eol_date": "2026-07-01" },
-      { "range": "1.20.x", "eol_date": "" },
-      { "range": "1.21.x", "eol_date": "" }
+      {
+        "range": "1.17.x",
+        "eol_date": "2025-10-07"
+      },
+      {
+        "range": "1.18.x",
+        "eol_date": "2026-03-10"
+      },
+      {
+        "range": "1.19.x",
+        "eol_date": "2026-07-08"
+      },
+      {
+        "range": "1.20.x",
+        "eol_date": ""
+      },
+      {
+        "range": "1.21.x",
+        "eol_date": ""
+      }
     ]
   },
-
   "upgrade_hazards": [
     {
       "trigger": "minor 버전 업그레이드",
@@ -39,6 +73,5 @@
       "severity": "HIGH"
     }
   ],
-
   "k8s_breaks": {}
 }

@@ -372,3 +372,312 @@ class TestParseChartRefDefensive:
         # "my-app-latest" 같은 비정상 chart 필드 — 크래시 없이 빈 버전 반환
         name, ver = compat_lib.parse_chart_ref("my-app-latest")
         assert ver == ""
+
+
+# ══════════════════════════════════════════════════════════════
+# chart_to_app — app 버전 판별 (chart 버전 오인 방지)
+# ══════════════════════════════════════════════════════════════
+class TestResolveAppMinor:
+    """helm ls가 app_version을 비워 보낼 때 chart 버전을 app으로 오인하면 안 된다.
+
+    cluster-autoscaler는 chart 9.x / app 1.x로 체계가 달라, 폴백이 곧 false BLOCK이었다.
+    """
+
+    PIN = {"type": "minor_pin"}
+
+    def test_app_version_scheme_missing_app_ver_is_undecidable(self):
+        # chart_to_app="app_version" + app_version 빈 값 → CRITICAL이 아니라 판정 불가(HIGH)
+        f = compat_lib.evaluate_support(
+            {"support": self.PIN, "chart_to_app": "app_version",
+             "chart_name": "cluster-autoscaler"},
+            installed_chart_ver="9.51.0", installed_app_ver="",
+            target_k8s="1.36")
+        assert f.result == "FAIL"
+        assert f.severity == "HIGH"
+        assert "판별할 수 없어" in f.detail
+        # chart 버전(9.51)을 app 버전으로 오인한 흔적이 없어야 한다
+        assert "app 9.51" not in f.detail
+
+    def test_app_version_scheme_with_app_ver_still_evaluates(self):
+        f = compat_lib.evaluate_support(
+            {"support": self.PIN, "chart_to_app": "app_version",
+             "chart_name": "cluster-autoscaler"},
+            installed_chart_ver="9.51.0", installed_app_ver="1.36.0",
+            target_k8s="1.36")
+        assert f.result == "PASS"
+
+    def test_same_scheme_falls_back_to_chart_ver(self):
+        # chart 버전 = app 버전인 차트는 app_version이 비어도 chart 버전으로 판정 가능
+        f = compat_lib.evaluate_support(
+            {"support": self.PIN, "chart_to_app": "same", "chart_name": "x"},
+            installed_chart_ver="1.36.2", installed_app_ver="",
+            target_k8s="1.36")
+        assert f.result == "PASS"
+
+    def test_lookup_table_maps_chart_to_app(self):
+        entry = {"support": self.PIN, "chart_name": "x",
+                 "chart_to_app": {"type": "lookup",
+                                  "table": {"9.51.x": "1.34.0"}}}
+        f = compat_lib.evaluate_support(
+            entry, installed_chart_ver="9.51.0", installed_app_ver="",
+            target_k8s="1.34")
+        assert f.result == "PASS"
+
+
+# ══════════════════════════════════════════════════════════════
+# 신선도 — 큐레이션 데이터가 언제 기준인가
+# ══════════════════════════════════════════════════════════════
+class TestEvaluateStaleness:
+    ENTRY = {"chart_name": "x", "compat_source": "https://example/docs"}
+
+    def test_fresh_data_no_finding(self):
+        e = {**self.ENTRY, "last_verified": "2026-08-01"}
+        assert compat_lib.evaluate_staleness(e, today="2026-08-31") is None
+
+    def test_stale_data_is_info_not_gate_blocking(self):
+        # 낡음은 위험의 증거가 아니라 확신도 문제 — MEDIUM(INFO)이라 게이트를 막지 않는다
+        e = {**self.ENTRY, "last_verified": "2026-01-01"}
+        f = compat_lib.evaluate_staleness(e, today="2026-08-31")
+        assert f is not None
+        assert f.severity == "MEDIUM"
+        assert "242일 경과" in f.detail
+
+    def test_boundary_exactly_at_threshold_is_fresh(self):
+        # 임계값과 같은 날은 아직 낡지 않음 (> 비교)
+        e = {**self.ENTRY, "last_verified": "2026-03-04"}  # 2026-08-31까지 180일
+        assert compat_lib.evaluate_staleness(e, today="2026-08-31") is None
+
+    def test_missing_last_verified_warns(self):
+        # 큐레이션 시점을 모르면 낡았는지도 알 수 없다 → 침묵하지 않는다
+        f = compat_lib.evaluate_staleness(self.ENTRY, today="2026-08-31")
+        assert f is not None
+        assert "last_verified 없음" in f.detail
+
+    def test_malformed_date_warns(self):
+        e = {**self.ENTRY, "last_verified": "2026/08/31"}
+        f = compat_lib.evaluate_staleness(e, today="2026-08-31")
+        assert f is not None
+        assert "형식 오류" in f.detail
+
+
+# ══════════════════════════════════════════════════════════════
+# unknown + verified_k8s_max — 상시 WARN 억제
+# ══════════════════════════════════════════════════════════════
+class TestUnknownVerifiedMax:
+    def _entry(self, evidence="official_doc", **kw):
+        return {"chart_name": "alb",
+                "support": {"type": "unknown", "evidence": evidence, **kw},
+                "compat_source": "https://example/docs", "chart_to_app": "same"}
+
+    def test_within_verified_range_is_info_not_pass(self):
+        # 근거가 "사람이 확인했다"뿐이므로 공식 매트릭스 PASS와 같은 표시를 내면 안 된다.
+        # MEDIUM은 exit code에 영향이 없어 게이트는 열린 채로 남는다.
+        f = compat_lib.evaluate_support(
+            self._entry(verified_k8s_max="1.36"),
+            installed_chart_ver="3.5.0", installed_app_ver="3.5.0", target_k8s="1.36")
+        assert f.severity == "MEDIUM"
+        assert f.result != "PASS"
+        assert "자동 판정 아님" in f.detail
+
+    def test_beyond_verified_range_warns_again(self):
+        # 확인 기록을 넘어서면 자동으로 다시 경고 — 기록이 영구 면죄부가 되면 안 된다
+        f = compat_lib.evaluate_support(
+            self._entry(verified_k8s_max="1.36"),
+            installed_chart_ver="3.5.0", installed_app_ver="3.5.0", target_k8s="1.37")
+        assert f.result == "FAIL"
+        assert f.severity == "HIGH"
+        assert "미확인 구간" in f.detail
+
+    def test_no_verified_max_keeps_old_warn(self):
+        # 필드가 없는 기존 데이터는 종전대로 HIGH (하위호환)
+        f = compat_lib.evaluate_support(
+            self._entry(), installed_chart_ver="3.5.0",
+            installed_app_ver="3.5.0", target_k8s="1.36")
+        assert f.result == "FAIL"
+        assert f.severity == "HIGH"
+
+
+# ══════════════════════════════════════════════════════════════
+# upgrade_hazards — 이미 지나온 버전은 발화하지 않음
+# ══════════════════════════════════════════════════════════════
+class TestFiredHazards:
+    ENTRY = {
+        "chart_name": "alb",
+        "upgrade_hazards": [
+            {"trigger": "v3.0.0로 업그레이드", "fires_below": "3.0.0", "action": "a"},
+            {"trigger": "v3.4.0로 업그레이드", "fires_below": "3.4.0", "action": "b"},
+            {"trigger": "minor 업그레이드", "action": "c"},
+        ],
+    }
+
+    def test_no_hazards_when_upgrade_not_needed(self):
+        assert compat_lib.fired_hazards(self.ENTRY, "3.5.0", False) == []
+
+    def test_passed_versions_suppressed(self):
+        # 3.5.0 설치본에 3.0.0/3.4.0 주의사항은 이미 지나온 것 → 버전 무관 항목만 남는다
+        out = compat_lib.fired_hazards(self.ENTRY, "3.5.0", True)
+        assert len(out) == 1
+        assert "minor 업그레이드" in out[0].detail
+
+    def test_older_chart_still_gets_them(self):
+        out = compat_lib.fired_hazards(self.ENTRY, "3.1.0", True)
+        assert len(out) == 2  # 3.4.0 + 버전 무관
+
+    def test_unknown_installed_version_fires_conservatively(self):
+        # 설치 버전을 모르면 억제하지 않는다 (false 안심 방지)
+        out = compat_lib.fired_hazards(self.ENTRY, "", True)
+        assert len(out) == 3
+
+
+# ══════════════════════════════════════════════════════════════
+# k8s_floor — K8s 버전이 요구하는 최소 차트 버전 (karpenter)
+# ══════════════════════════════════════════════════════════════
+class TestEvaluateK8sFloor:
+    ENTRY = {
+        "chart_name": "karpenter",
+        "support": {"type": "k8s_floor",
+                    "floors": {"1.34": "1.6", "1.35": "1.9", "1.36": "1.13"}},
+    }
+
+    def test_below_floor_blocks(self):
+        # 실제 사례: karpenter 1.8.6 설치본으로 K8s 1.36에 가려 함
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="1.8.6",
+            installed_app_ver="1.8.6", target_k8s="1.36")
+        assert f.result == "FAIL"
+        assert f.severity == "CRITICAL"
+        assert "1.13 이상" in f.detail
+
+    def test_at_floor_passes(self):
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="1.13.0",
+            installed_app_ver="1.13.0", target_k8s="1.36")
+        assert f.result == "PASS"
+
+    def test_target_not_in_matrix_warns(self):
+        # 아직 공식 매핑이 안 나온 K8s는 통과시키지 않는다
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="1.13.0",
+            installed_app_ver="1.13.0", target_k8s="1.37")
+        assert f.result == "FAIL"
+        assert f.severity == "HIGH"
+
+    def test_unknown_installed_version_warns(self):
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="",
+            installed_app_ver="", target_k8s="1.36")
+        assert f.severity == "HIGH"
+        assert "판별할 수 없어" in f.detail
+
+
+# ══════════════════════════════════════════════════════════════
+# window 확장 — app 버전 매칭 / 상한 없는 행
+# ══════════════════════════════════════════════════════════════
+class TestWindowAppMatching:
+    """chart와 app 체계가 다른 차트(metrics-server chart 3.13.0 = app 0.8.0)."""
+
+    ENTRY = {
+        "chart_name": "metrics-server",
+        "support": {"type": "window", "match_on": "app",
+                    "matrix": [{"chart_range": "0.8.x", "k8s_min": "1.31"},
+                               {"chart_range": "0.9.x", "k8s_min": "1.34"}]},
+    }
+
+    def test_matches_on_app_version_not_chart(self):
+        # chart 3.13.0으로 매칭하면 매트릭스에 없어 MEDIUM이 나온다 — app 0.8.0으로 봐야 한다
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="3.13.0",
+            installed_app_ver="0.8.0", target_k8s="1.36")
+        assert f.result == "PASS"
+        assert "app 0.8.0" in f.detail
+
+    def test_open_ended_row_has_no_upper_bound(self):
+        # k8s_max가 없는 행은 상한 없음 — 아무리 높은 target도 상한 위반이 아니다
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="3.13.0",
+            installed_app_ver="0.8.0", target_k8s="1.40")
+        assert f.result == "PASS"
+
+    def test_below_min_still_flagged(self):
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="3.14.0",
+            installed_app_ver="0.9.0", target_k8s="1.33")
+        assert f.result == "FAIL"
+        assert f.severity == "HIGH"
+
+    def test_missing_app_version_is_undecidable(self):
+        f = compat_lib.evaluate_support(
+            self.ENTRY, installed_chart_ver="3.13.0",
+            installed_app_ver="", target_k8s="1.36")
+        assert f.severity == "HIGH"
+        assert "판별할 수 없음" in f.detail
+
+
+class TestRegistryChartNameList:
+    """istio처럼 여러 chart 이름이 같은 매트릭스를 공유하는 경우."""
+
+    def test_list_registers_every_name(self, tmp_path):
+        (tmp_path / "istio.json").write_text(json.dumps({
+            "chart_name": ["base", "istiod", "cni", "ztunnel"],
+            "support": {"type": "unknown"},
+        }), encoding="utf-8")
+        reg = compat_lib.load_registry(str(tmp_path))
+        assert set(reg) == {"base", "istiod", "cni", "ztunnel"}
+
+    def test_each_entry_carries_its_own_name(self, tmp_path):
+        # 원본을 그대로 공유하면 메시지에 리스트가 통째로 찍힌다
+        (tmp_path / "istio.json").write_text(json.dumps({
+            "chart_name": ["base", "istiod"],
+            "support": {"type": "unknown"},
+        }), encoding="utf-8")
+        reg = compat_lib.load_registry(str(tmp_path))
+        assert reg["base"]["chart_name"] == "base"
+        assert reg["istiod"]["chart_name"] == "istiod"
+
+
+# ══════════════════════════════════════════════════════════════
+# evidence — 근거 계층이 상한 주장을 통제한다
+# ══════════════════════════════════════════════════════════════
+class TestEvidenceGatesTheClaim:
+    """kubeVersion은 하한만 알려준다. 그것으로 상한을 주장하는 것이 이 스킬이
+    처음부터 금지한 추론이며, evidence 라벨을 붙인다고 정당해지지 않는다."""
+
+    def _entry(self, evidence):
+        return {"chart_name": "x", "compat_source": "https://example/docs",
+                "support": {"type": "unknown", "evidence": evidence,
+                            "verified_k8s_max": "1.36"}}
+
+    def test_kubeversion_only_cannot_claim_max(self):
+        f = compat_lib.evaluate_support(
+            self._entry("kubeversion_only"), installed_chart_ver="1.0.0",
+            installed_app_ver="1.0.0", target_k8s="1.36")
+        assert f.severity == "HIGH"
+        assert "하한만" in f.detail
+
+    def test_no_evidence_cannot_claim_max(self):
+        f = compat_lib.evaluate_support(
+            self._entry("none"), installed_chart_ver="1.0.0",
+            installed_app_ver="1.0.0", target_k8s="1.36")
+        assert f.severity == "HIGH"
+
+    def test_missing_evidence_field_defaults_to_none(self):
+        # evidence를 안 쓴 기존 데이터도 상한 주장을 인정받지 못한다
+        e = {"chart_name": "x", "compat_source": "u",
+             "support": {"type": "unknown", "verified_k8s_max": "1.36"}}
+        f = compat_lib.evaluate_support(
+            e, installed_chart_ver="1.0.0", installed_app_ver="1.0.0",
+            target_k8s="1.36")
+        assert f.severity == "HIGH"
+
+    def test_chart_inspect_can_claim_max(self):
+        f = compat_lib.evaluate_support(
+            self._entry("chart_inspect"), installed_chart_ver="1.0.0",
+            installed_app_ver="1.0.0", target_k8s="1.36")
+        assert f.severity == "MEDIUM"
+        assert "chart_inspect" in f.detail
+
+    def test_official_doc_can_claim_max(self):
+        f = compat_lib.evaluate_support(
+            self._entry("official_doc"), installed_chart_ver="1.0.0",
+            installed_app_ver="1.0.0", target_k8s="1.36")
+        assert f.severity == "MEDIUM"

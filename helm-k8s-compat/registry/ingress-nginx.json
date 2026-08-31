@@ -1,20 +1,32 @@
 {
   "chart_name": "ingress-nginx",
+  "last_verified": "2026-08-31",
   "repo": "https://kubernetes.github.io/ingress-nginx",
   "compat_source": "https://github.com/kubernetes/ingress-nginx#supported-versions",
   "chart_to_app": "same",
   "has_crds": false,
-
   "support": {
     "type": "window",
     "note": "supported = 해당 K8s 버전에서 E2E 테스트 통과. chart 버전 = controller 버전 (4.15.1 → v1.15.1).",
     "matrix": [
-      { "chart_range": "4.13.x", "k8s_min": "1.29", "k8s_max": "1.33" },
-      { "chart_range": "4.14.x", "k8s_min": "1.30", "k8s_max": "1.34" },
-      { "chart_range": "4.15.x", "k8s_min": "1.31", "k8s_max": "1.35" }
-    ]
+      {
+        "chart_range": "4.13.x",
+        "k8s_min": "1.29",
+        "k8s_max": "1.33"
+      },
+      {
+        "chart_range": "4.14.x",
+        "k8s_min": "1.30",
+        "k8s_max": "1.34"
+      },
+      {
+        "chart_range": "4.15.x",
+        "k8s_min": "1.31",
+        "k8s_max": "1.35"
+      }
+    ],
+    "evidence": "official_matrix"
   },
-
   "lifecycle": {
     "type": "whole_retired",
     "eol_date": "2026-03",
@@ -23,9 +35,7 @@
     "announcement": "https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/",
     "severity": "HIGH"
   },
-
   "upgrade_hazards": [],
-
   "k8s_breaks": {
     "1.22": {
       "change": "networking.k8s.io/v1beta1 Ingress 제거 — 구버전 차트의 Ingress 매니페스트가 깨짐",
