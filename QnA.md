@@ -109,7 +109,9 @@ Phase 0 사전 검증의 COM-004 규칙에서 EKS Insights의 `UPGRADE_READINESS
 
 ### Q: 설치된 Helm 차트가 대상 K8s 버전을 지원하는지 미리 알 수 있나요?
 
-`helm-k8s-compat` 스킬(install.sh로 함께 설치됨)이 이 역할을 합니다. `helm ls`로 설치된 Release를 수집한 뒤, De-facto 표준 차트를 큐레이션한 registry와 대조하여 업그레이드 전에 호환성 문제를 검출합니다. "Helm 차트 호환성 점검해줘"로 단독 실행하거나, 업그레이드 Phase 0 보조로 사용할 수 있습니다.
+`helm-k8s-compat` 스킬(install.sh로 함께 설치됨)이 이 역할을 합니다. `helm ls`로 설치된 Release를 수집한 뒤, De-facto 표준 차트 31종을 큐레이션한 registry와 대조하여 호환성 문제를 검출합니다. "Helm 차트 호환성 점검해줘"로 단독 실행하거나, 업그레이드 Phase 0 보조로 사용할 수 있습니다.
+
+현재/대상 버전을 같게 주면(`--current 1.35 --target 1.35`) 업그레이드 없이 **지금 상태만 점검**합니다. 차트는 클러스터가 가만히 있어도 EOL을 맞고 지원 매트릭스는 새 K8s가 나오면서 바뀌므로, 주기적으로 돌려 현재 버전 기준으로 이미 지원 범위를 벗어난 차트를 찾는 용도입니다.
 
 검출하는 항목:
 
@@ -118,7 +120,7 @@ Phase 0 사전 검증의 COM-004 규칙에서 EKS Insights의 `UPGRADE_READINESS
 - **minor 강결합** — cluster-autoscaler는 app minor가 K8s minor와 1:1로 일치해야 합니다.
 - **수동 업그레이드 함정** — Helm v3는 CRD를 자동 업데이트하지 않습니다. aws-load-balancer-controller·kube-prometheus-stack처럼 CRD를 가진 차트는 `kubectl apply`로 CRD를 수동 갱신해야 하며, 버전 점프에 따라 IAM 정책·webhook 전환이 필요할 수 있습니다.
 
-판정은 `helm_compat_check.py`의 exit code로 결정됩니다(0=문제없음, 1=차단, 2=확인 필요, 127=helm 미존재). 기존 gate_check.py와 동일하게 LLM이 우회할 수 없습니다.
+판정은 `helm_compat_check.py`의 exit code로 결정됩니다(0=문제없음, 1=차단, 2=확인 필요, 64=입력 오류, 127=helm 미존재). 기존 gate_check.py와 동일하게 LLM이 우회할 수 없습니다. `64`는 게이트 판정이 아니라 잘못된 호출이므로 WARN으로 읽어서는 안 됩니다.
 
 ### Q: 모든 Helm 차트를 검사하나요?
 

@@ -63,35 +63,79 @@ EKS 업그레이드처럼 **고위험·다단계·장기 체공** 작업은 운�
 | `k8s-upgrade-skills` | K8s/EKS 버전 업그레이드 (Phase-gated) | "EKS 클러스터를 업그레이드해줘" |
 | `helm-k8s-compat` | Helm 차트 ↔ K8s 버전 호환성 **사전 점검** | "Helm 차트 호환성 점검해줘" |
 
-`helm-k8s-compat`은 EKS Insights·kubent가 못 잡는 **차트 레벨 호환성 함정**을 업그레이드 전에 검출합니다. 두 도구는 라이브 API 서버에 호출된 API만 스캔하지만, 실제 업그레이드를 깨먹는 건 대부분 "이 차트 버전이 대상 K8s를 지원하는가, 컨트롤러가 계속 작동하는가" — 릴리스 노트와 지원 매트릭스에만 있는 지식입니다.
+`helm-k8s-compat`은 EKS Insights·kubent가 못 잡는 **차트 레벨 호환성 함정**을 검출합니다. 두 도구는 라이브 API 서버에 호출된 API만 스캔하지만, 실제 업그레이드를 깨먹는 건 대부분 "이 차트 버전이 대상 K8s를 지원하는가, 컨트롤러가 계속 작동하는가" — 릴리스 노트와 지원 매트릭스에만 있는 지식입니다.
 
-De-facto 표준 차트(ingress-nginx, cert-manager, cluster-autoscaler, aws-load-balancer-controller, kube-prometheus-stack)를 큐레이션한 registry와 라이브 `helm` 조회를 결합해 다음을 검출합니다:
+**두 가지 용도**로 씁니다:
+
+```bash
+# 업그레이드 사전 점검
+--current 1.35 --target 1.36
+
+# 정기 점검 — "지금 차트에 문제 없나" (동일 버전)
+--current 1.35 --target 1.35
+```
+
+정기 점검 모드는 K8s를 올리지 않고도 **현재 버전 기준으로 이미 지원 범위 밖인 차트**를 잡아냅니다. 차트는 클러스터가 가만히 있어도 EOL을 맞고, 매트릭스는 새 K8s가 나오면서 바뀌기 때문입니다.
+
+De-facto 표준 차트 **31종**을 큐레이션한 registry와 라이브 `helm` 조회를 결합해 다음을 검출합니다:
 
 - **지원 버전 윈도우 초과** — 예: ingress-nginx 4.13.x는 K8s 1.33이 상한 → 1.34 업그레이드 전 차트를 먼저 올려야 함
+- **K8s가 요구하는 최소 차트 버전 미달** — 예: K8s 1.36은 Karpenter 1.13+ 요구 (공식 매트릭스가 "차트 → K8s"가 아니라 반대 방향인 경우)
 - **retirement / EOL** — 차트 전체 retirement(ingress-nginx 2026-03) 또는 release별 날짜 EOL(cert-manager)
 - **K8s API 제거 충돌** — 버전 점프 구간에 걸린 제거 API (PSP, v1beta1 Ingress 등)
 - **수동 업그레이드 함정** — Helm이 자동 처리하지 않는 CRD 재적용 / IAM 정책 / webhook 전환
 
-판정은 `helm_compat_check.py`의 exit code(0/1/2/127)로 결정되며, 기존 스킬과 동일한 신뢰 모델을 따릅니다. 자세한 내용은 [QnA.md](QnA.md)의 "Helm 차트 호환성" 항목을 참고하세요.
+### 근거를 등급으로 다룹니다
 
-> **한계**: registry는 표준 차트를 깊게 큐레이션한 것으로 모든 차트를 망라하지 않습니다. 미등록 차트는 자동 평가 대상이 아니며 **"수동 검토 필요"(INFO)로 보고**하고 조용히 통과시키지 않습니다. EKS Insights·kubent(API 스캔)와는 **상호 보완** 관계입니다.
+차트마다 알 수 있는 것의 깊이가 다릅니다. 공식 호환성 매트릭스를 유지하는 차트가 있는가 하면, 릴리스 노트에 `requires Kubernetes 1.22+`만 반복하는 차트도 있습니다. 그래서 판단의 **출처를 등급으로 기록**하고, 등급이 주장할 수 있는 범위를 코드로 제한합니다.
+
+| 등급 | 의미 |
+|------|------|
+| `official_matrix` | 공식 호환성 매트릭스를 그대로 옮김 |
+| `official_doc` | 공식 문서에 서술은 있으나 매트릭스는 아님 |
+| `chart_inspect` | 차트를 렌더해 **K8s 결합 표면**(CRD/webhook/APIService/CSI)을 확인 |
+| `kubeversion_only` | `Chart.yaml`의 `kubeVersion`만 확인 — 하한 정보뿐 |
+| `community` | 공신력 있는 커뮤니티 신호(GitHub 이슈, 설치 후기) |
+
+- `kubeVersion`은 대부분 하한만 선언하므로, **그것만으로는 "이 버전까지 안전하다"고 주장할 수 없습니다.** `>=1.25`를 1.36이 충족한다는 사실은 1.36을 확인한 것이 아닙니다.
+- **CRD·webhook·APIService를 가진 차트**는 공식 매트릭스가 아닌 근거로 상한을 주장할 수 없습니다. 그 지점이 마이너 업그레이드가 실제로 깨뜨리는 곳이기 때문입니다.
+
+결합 표면은 `helm template` + `helm show crds`로 **실측**합니다(클러스터 접근 불필요). 다만 렌더가 전부를 보여주지는 않아서 — argo-workflows처럼 CRD를 pre-install hook으로 설치하는 차트는 렌더 결과가 0입니다 — 그런 경우와 렌더 실패는 registry에 사실 그대로 기록하고 등급을 낮춥니다.
+
+판정은 `helm_compat_check.py`의 exit code로 결정되며, 기존 스킬과 동일한 신뢰 모델을 따릅니다.
+
+| exit | 의미 |
+|------|------|
+| `0` | 문제 없음 |
+| `1` | 차단 — 차트가 대상 버전을 지원하지 않음 |
+| `2` | 확인 필요 |
+| `64` | 입력 오류 — **게이트 판정이 아님** (WARN으로 읽으면 안 됨) |
+| `127` | helm CLI 없음 / 클러스터 접근 불가 |
+
+자세한 내용은 [QnA.md](QnA.md)의 "Helm 차트 호환성" 항목과 [registry/_schema.md](helm-k8s-compat/registry/_schema.md)를 참고하세요.
+
+> **한계**: registry는 표준 차트를 깊게 큐레이션한 것으로 모든 차트를 망라하지 않습니다. 미등록 차트는 자동 평가 대상이 아니며 **"수동 검토 필요"(INFO)로 보고**하고 조용히 통과시키지 않습니다. 큐레이션은 사람이 옮겨 적은 스냅샷이라 낡습니다 — 각 항목에 `last_verified`를 기록하고, 오래된 근거로 "문제 없음"이라 판정한 경우 그 사실을 함께 보고합니다. EKS Insights·kubent(API 스캔)와는 **상호 보완** 관계입니다.
 
 ## 로드맵
 
 | # | 기능 | 상태 |
 |---|------|------|
-| 1 | **고도화된 폴백 메커니즘** — 실패 시점 클러스터 상태 스냅샷 자동 저장 + AI RCA 리포트 | 📋 계획됨 |
+| 1 | **helm-k8s-compat을 업그레이드 Phase 0에 연결** — 현재 두 스킬은 독립 실행이며 서로를 호출하지 않습니다. 업그레이드를 **차단하는 게이트가 아니라 경고**로 붙일 예정입니다(차트 버전이 낮다고 즉시 장애가 나는 것은 아니고, 우선순위는 K8s 버전이므로) | 🚧 진행 중 |
+| 2 | **registry 근거 등급 승상** — `chart_inspect` 수준 항목을 개별 공식 문서 조사로 `official_doc`/`official_matrix`까지 올리기 | 🚧 진행 중 |
+| 3 | **고도화된 폴백 메커니즘** — 실패 시점 클러스터 상태 스냅샷 자동 저장 + AI RCA 리포트 | 📋 계획됨 |
 
 ## 개발 현황
 
 | Environment | Platform | IaC | 상태 |
 |-------------|----------|-----|------|
-| AWS | EKS | Terraform | v1 — Self 검증 중|
+| AWS | EKS | Terraform | v1 — 실 프로덕션 적용(Karpenter + Fargate 구성, 1.33→1.35 다홉) |
 | On-Premises | Kubespray | Ansible-playbook | 📋 계획됨 |
+
+> Managed Node Group 롤링 경로(Phase 4)는 코드로 구현돼 있으나 실 환경 검증 이력이 없습니다. 검증된 경로는 Karpenter + Fargate 조합입니다.
 
 ## Quick Start
 
-전제조건: `python3` (3.9+), `kubectl`, `aws` CLI가 PATH에 있어야 합니다.
+전제조건: `python3` (3.9+), `kubectl`, `aws` CLI가 PATH에 있어야 합니다. `helm-k8s-compat`을 쓰려면 `helm` (v3+)도 필요합니다.
 
 ```bash
 # 1. 스킬을 설치
@@ -284,13 +328,15 @@ graph TD
 │   ├── scripts/
 │   │   ├── compat_lib.py               #     순수 함수 (버전 파싱/범위 매칭/3축 평가)
 │   │   └── helm_compat_check.py        #     CLI 엔트리포인트 (exit 0/1/2/127)
-│   └── registry/                       #   De-facto 표준 차트 큐레이션 지식
-│       ├── _schema.md                  #     3직교축 스키마 정의 + 차트 추가 체크리스트
+│   └── registry/                       #   차트 큐레이션 지식 (31종)
+│       ├── _schema.md                  #     스키마 정의 + 근거 등급 + 차트 추가 체크리스트
+│       ├── karpenter.json              #     k8s_floor — K8s 버전이 요구하는 최소 차트 버전
+│       ├── istio.json                  #     window + chart_name 배열(base/istiod/cni/ztunnel)
 │       ├── ingress-nginx.json          #     window + retirement + k8s_breaks
 │       ├── cert-manager.json           #     window + per_release EOL + CRD
+│       ├── metrics-server.json         #     window + match_on:app (chart 3.x = app 0.x)
 │       ├── cluster-autoscaler.json     #     minor_pin
-│       ├── aws-load-balancer-controller.json  # unknown + upgrade_hazards
-│       └── kube-prometheus-stack.json  #     unknown + CRD
+│       └── ... (argo-*, keda, thanos, gitlab 등 24종)
 ├── docs/
 │   ├── required-permissions.md        #   IAM/RBAC 최소 권한 가이드
 │   └── failure-runbook.md             #   실패 시나리오별 대응 절차 (모니터 이벤트 해석 포함)
